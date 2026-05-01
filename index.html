@@ -12,7 +12,7 @@
       table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
       th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ddd; }
       th { background: #fafafa; font-weight: 600; }
-      .hex { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 0.85rem; color: #555; }
+      .detail { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 0.85rem; color: #555; }
       .note { color: #666; font-size: 0.9rem; }
     </style>
   </head>
@@ -23,13 +23,13 @@
     <div id="status">Disconnected</div>
     <table>
       <thead>
-        <tr><th>sensor</th><th>packets</th><th>bytes</th><th>last 16 bytes (hex)</th></tr>
+        <tr><th>sensor</th><th>packets</th><th>bytes</th><th>last decoded sample</th></tr>
       </thead>
       <tbody>
-        <tr id="row-eeg"><td>EEG</td><td class="pkt">0</td><td class="byt">0</td><td class="hex"></td></tr>
-        <tr id="row-ppg"><td>PPG</td><td class="pkt">0</td><td class="byt">0</td><td class="hex"></td></tr>
-        <tr id="row-acc"><td>ACC</td><td class="pkt">0</td><td class="byt">0</td><td class="hex"></td></tr>
-        <tr id="row-bat"><td>Battery</td><td class="pkt">0</td><td class="byt">0</td><td class="hex"></td></tr>
+        <tr id="row-eeg"><td>EEG</td><td class="pkt">0</td><td class="byt">0</td><td class="detail"></td></tr>
+        <tr id="row-ppg"><td>PPG</td><td class="pkt">0</td><td class="byt">0</td><td class="detail"></td></tr>
+        <tr id="row-acc"><td>ACC</td><td class="pkt">0</td><td class="byt">0</td><td class="detail"></td></tr>
+        <tr id="row-bat"><td>Battery</td><td class="pkt">0</td><td class="byt">0</td><td class="detail"></td></tr>
       </tbody>
     </table>
     <script type="module" src="/src/main.ts"></script>

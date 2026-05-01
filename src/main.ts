@@ -1,10 +1,15 @@
-// Link Band — first milestone: scan, connect, subscribe to all four sensor
-// notifications, and display per-sensor packet/byte counts. No parsing yet.
+// Link Band frontend — scan/connect via Web Bluetooth, parse incoming BLE
+// notifications via `linkband/parser.ts`, and render decoded values per sensor.
 //
 // Activation sequence mirrors spec §5.1: Battery notify first → EEG `start`
 // write → 1s wait → EEG/ACC/PPG notify in queue order. Same as the Python
-// `linkband/spike_dump.py` reference.
+// `reference-py/linkband/spike_dump.py` reference.
+//
+// `on{Eeg,Ppg,Acc,Bat}Bytes` are the single processing path — both live BLE
+// handlers and (next milestone) replay funnel through them, so any logic
+// lives once and works for both sources.
 
+import { Parser, parseBattery } from "./linkband/parser";
 import {
   ACC_NOTIFY,
   ACC_SERVICE,
@@ -26,33 +31,83 @@ const counters: Record<Sensor, { packets: number; bytes: number }> = {
   bat: { packets: 0, bytes: 0 },
 };
 
+const parser = new Parser();
+
 function setStatus(text: string): void {
   const el = document.getElementById("status");
   if (el) el.textContent = text;
 }
 
-function bumpCounter(sensor: Sensor, data: DataView): void {
+function bumpCounter(sensor: Sensor, byteLength: number): void {
   counters[sensor].packets += 1;
-  counters[sensor].bytes += data.byteLength;
-
+  counters[sensor].bytes += byteLength;
   const row = document.getElementById(`row-${sensor}`);
   if (!row) return;
   row.querySelector(".pkt")!.textContent = String(counters[sensor].packets);
   row.querySelector(".byt")!.textContent = String(counters[sensor].bytes);
-
-  const previewLen = Math.min(data.byteLength, 16);
-  const u8 = new Uint8Array(data.buffer, data.byteOffset, previewLen);
-  const hex = Array.from(u8)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join(" ");
-  row.querySelector(".hex")!.textContent =
-    hex + (data.byteLength > previewLen ? " ..." : "");
 }
+
+function setDetail(sensor: Sensor, text: string): void {
+  const el = document.querySelector(`#row-${sensor} .detail`);
+  if (el) el.textContent = text;
+}
+
+function onEegBytes(data: Uint8Array): void {
+  bumpCounter("eeg", data.byteLength);
+  const batch = parser.parseEeg(data);
+  const last = batch.ch1Uv.length - 1;
+  if (last < 0) return;
+  setDetail(
+    "eeg",
+    `ch1=${batch.ch1Uv[last].toFixed(1)}μV  ch2=${batch.ch2Uv[last].toFixed(1)}μV  leadOff=${
+      batch.leadOff[last] ? "Y" : "N"
+    }  t=${batch.tDevice.toFixed(2)}s`,
+  );
+}
+
+function onPpgBytes(data: Uint8Array): void {
+  bumpCounter("ppg", data.byteLength);
+  const batch = parser.parsePpg(data);
+  const last = batch.red.length - 1;
+  if (last < 0) return;
+  setDetail("ppg", `RED=${batch.red[last]}  IR=${batch.ir[last]}`);
+}
+
+function onAccBytes(data: Uint8Array): void {
+  bumpCounter("acc", data.byteLength);
+  const batch = parser.parseAcc(data);
+  const last = batch.x.length - 1;
+  if (last < 0) return;
+  setDetail("acc", `x=${batch.x[last]}  y=${batch.y[last]}  z=${batch.z[last]}`);
+}
+
+function onBatBytes(data: Uint8Array): void {
+  bumpCounter("bat", data.byteLength);
+  const status = parseBattery(data);
+  setDetail("bat", `level=${status.level}%`);
+}
+
+const dispatch: Record<Sensor, (data: Uint8Array) => void> = {
+  eeg: onEegBytes,
+  ppg: onPpgBytes,
+  acc: onAccBytes,
+  bat: onBatBytes,
+};
 
 function makeHandler(sensor: Sensor): (event: Event) => void {
   return (event) => {
     const target = event.target as BluetoothRemoteGATTCharacteristic;
-    if (target.value) bumpCounter(sensor, target.value);
+    if (!target.value) return;
+    const data = new Uint8Array(
+      target.value.buffer,
+      target.value.byteOffset,
+      target.value.byteLength,
+    );
+    try {
+      dispatch[sensor](data);
+    } catch (err) {
+      console.warn(`${sensor} parse failed`, err);
+    }
   };
 }
 
@@ -69,6 +124,10 @@ async function connect(): Promise<void> {
 
   device.addEventListener("gattserverdisconnected", () => {
     setStatus("disconnected");
+    // BLE 재연결 시 보간 시각 리셋 (spec §13).
+    parser.resetEegTimestamps();
+    parser.resetPpgTimestamps();
+    parser.resetAccTimestamps();
   });
 
   // spec §5.1 활성화 순서: Battery 먼저 → EEG start write → 1s 대기 → EEG/ACC/PPG.

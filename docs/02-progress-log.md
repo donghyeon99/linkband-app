@@ -49,6 +49,34 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-01 (저녁) — main.ts 가 parser 사용, 디코드 값 표시 [PROGRESS]
+
+**무엇을**: `src/main.ts` 의 BLE notification 처리 경로에 parser 결합. 라이브 BLE 와 (다음 단계) replay 가 같은 파이프라인을 공유하도록 단일 처리 함수 4개 추가:
+- `onEegBytes(data)` / `onPpgBytes(data)` / `onAccBytes(data)` / `onBatBytes(data)` — 각각 parser 호출 + 카운터 증가 + UI 디코드 값 갱신.
+- `dispatch` Record 로 sensor 이름 → 함수 매핑. `makeHandler(sensor)` 가 BLE event → Uint8Array → dispatch[sensor] 호출.
+
+**UI 갱신**:
+- `index.html` column 헤더: "last 16 bytes (hex)" → "last decoded sample".
+- `.hex` 클래스 → `.detail` (의미 정합).
+- 디코드 표시 형식:
+  - EEG: `ch1=12.3μV  ch2=-4.1μV  leadOff=N  t=14.32s` (마지막 샘플)
+  - PPG: `RED=63840  IR=22432`
+  - ACC: `x=14592  y=1792  z=-8192`
+  - Battery: `level=87%`
+
+**부수 정리**: BLE disconnect 시 parser 의 마지막 샘플 시각 3개 모두 reset (재연결 후 헤더 기반 재초기화 — spec §13).
+
+**검증**:
+- `npm run test:run` → 16/16 passed (sanity 1 + parser 15)
+- `tsc --noEmit` 통과
+- `npm run build` → JS 3.00KB → **5.68KB** (parser/models 가 main.ts 에 import 되어 번들에 포함 — 의도)
+
+**다음 단계**: Replay 버튼 + EEG ch1 Canvas 차트 (step 5). reference-py/tests/fixtures/real1/ 의 dump 를 fetch 후 onEegBytes 등으로 흘려보내 디바이스 없이 동작 검증.
+
+**참조**: `src/main.ts`, `index.html`.
+
+---
+
 ### 2026-05-01 (저녁) — parser.ts 본체, 15/15 GREEN [PROGRESS]
 
 **무엇을**: `src/linkband/parser.ts` (160+줄) 작성. Python reference (`reference-py/linkband/parser.py`, 15/15 GREEN at be16261) 의 numerical 미러링.
