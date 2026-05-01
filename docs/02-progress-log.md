@@ -49,6 +49,42 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-01 (저녁) — TS + Web Bluetooth 피벗 [DECISION]
+
+**무엇을**: 오후의 "Python 유지" 결정을 뒤집고 **TS + Web Bluetooth API + Vercel 정적 배포**
+로 전환. 트리거는 Vercel 배포 목적이 분명해진 것 — 단일 정적 SPA 가 필요하면 Python
+서버 자체가 학생 PC 에서 돌아야 하는 모델은 마찰 (`uvx linkband-app`/PyInstaller 도
+환경 의존). 브라우저가 BLE Central 을 직접 잡으면 그 마찰이 사라짐.
+
+**결정**:
+- 새 stack: **Vite + TypeScript** (`web/` 디렉토리). 첫 마일스톤은 vanilla TS, 차트
+  단계에서 React 도입 검토.
+- 기존 Python 4 커밋 (`ea47c2b`~`be16261`) 은 **reference impl 로 보존**. 삭제 X.
+  parser/spec/test 가 TS 포팅의 정답지 역할.
+- spec `01-protocol-spec.md` 는 그대로 (언어 무관). 단 §1 아키텍처·§15 패키지 구조
+  는 갱신 예정.
+- 첫 마일스톤: **"데이터 받기"** — 스캔 → 연결 → CCCD enable → EEG `start` 쓰기 →
+  각 센서 패킷 카운트 표시. 파싱·DSP·차트는 추후.
+
+**오후 결정과의 차이**: 그때는 "DSP 라이브러리(scipy/neurokit/heartpy) 격차" 와 "코드량
+우려" 가 결정타였음. Web Bluetooth 카드를 명확히 살리는 시나리오에서는 Python 의 DSP
+이점보다 단일 정적 배포의 단순함이 압도. DSP 는 brain-band 단순 metric 수준이라 JS 로
+도 작성 가능 (밴드패스·peak detection·envelope). neurokit/heartpy 는 P2 메트릭에서
+편의성 도움이지만 필수는 아님.
+
+**브라우저 제약 메모**:
+- Web Bluetooth = Chromium 전용 (Chrome/Edge). Safari·Firefox 미지원. 학생용 도구
+  로서 Chromium 한정 OK 로 수용.
+- HTTPS 또는 localhost 에서만 동작. Vercel 자동 HTTPS 라 production 문제 없음.
+- `requestDevice()` 는 user gesture (버튼 클릭) 필요.
+
+**다음 단계**: `web/` scaffold (Vite + TS + `@types/web-bluetooth`), 단일 페이지로
+스캔 → 연결 → 패킷 카운트 표시. `linkband/ble.py` 작업은 중단.
+
+**참조**: 본 entry 가 결정 자체. `web/` 디렉토리 신설 예정.
+
+---
+
 ### 2026-05-01 (저녁) — parser.py 본체 작성, 15/15 GREEN [PROGRESS]
 
 **무엇을**: `linkband/parser.py` (170+줄) 작성. P0 단계 parser 본체 완성.

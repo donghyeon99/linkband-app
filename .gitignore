@@ -29,10 +29,17 @@ dist/
 .DS_Store
 *.swp
 
-# Web (future)
+# Web (TypeScript / Vite primary deliverable)
 node_modules/
 web/dist/
 web/.vite/
+web/coverage/
+web/.turbo/
+*.tsbuildinfo
+.vercel/
+
+# bkit runtime state
+.bkit/
 
 # Recordings / data
 data/
@@ -41,7 +48,7 @@ recordings/
 *.parquet
 *.h5
 sensor_data_log/
-tests/fixtures/real/
+tests/fixtures/real*/
 
 # Local secrets / config
 .env

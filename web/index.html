@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Link Band — receive (spike)</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
+      h1 { font-size: 1.5rem; }
+      button { padding: 0.5rem 1rem; font-size: 1rem; }
+      #status { margin: 1rem 0; padding: 0.5rem 1rem; background: #f3f3f3; border-radius: 4px; }
+      table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+      th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ddd; }
+      th { background: #fafafa; font-weight: 600; }
+      .hex { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 0.85rem; color: #555; }
+      .note { color: #666; font-size: 0.9rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Link Band — receive (spike)</h1>
+    <p class="note">Chromium (Chrome / Edge) 전용. HTTPS 또는 localhost 에서만 동작.</p>
+    <button id="connect">Connect to LXB-…</button>
+    <div id="status">Disconnected</div>
+    <table>
+      <thead>
+        <tr><th>sensor</th><th>packets</th><th>bytes</th><th>last 16 bytes (hex)</th></tr>
+      </thead>
+      <tbody>
+        <tr id="row-eeg"><td>EEG</td><td class="pkt">0</td><td class="byt">0</td><td class="hex"></td></tr>
+        <tr id="row-ppg"><td>PPG</td><td class="pkt">0</td><td class="byt">0</td><td class="hex"></td></tr>
+        <tr id="row-acc"><td>ACC</td><td class="pkt">0</td><td class="byt">0</td><td class="hex"></td></tr>
+        <tr id="row-bat"><td>Battery</td><td class="pkt">0</td><td class="byt">0</td><td class="hex"></td></tr>
+      </tbody>
+    </table>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
