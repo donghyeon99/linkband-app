@@ -7,11 +7,16 @@
 // Live BLE notifications and Replay (fetch the dump txt files from
 // reference-py) both feed the same on{Eeg,Ppg,Acc,Bat}Bytes pipeline,
 // which calls parser, then forwards the typed batch to the corresponding
-// view (src/ui/{eeg,ppg,acc}-view.ts). Battery is just a header-pill text.
+// view (src/ui/{eeg,ppg,acc}-view.ts).
+//
+// Page chrome (Header / Tabs / Footer) is provided by src/ui/layout.ts —
+// sensor-dashboard App.tsx layout mirror. Only the active tab's view
+// container is visible at a time.
 
 import { Parser, parseBattery } from "./linkband/parser";
 import { createAccView } from "./ui/acc-view";
 import { createEegView } from "./ui/eeg-view";
+import { createFooter, createHeader, createTabs } from "./ui/layout";
 import { createPpgView } from "./ui/ppg-view";
 import {
   ACC_NOTIFY,
@@ -26,48 +31,117 @@ import {
 } from "./uuids";
 
 type Sensor = "eeg" | "ppg" | "acc" | "bat";
+type TabId = "eeg" | "ppg" | "acc";
 
 const parser = new Parser();
 
-// Views — single instance per sensor, never disposed (page lifetime).
+// ─── Mount layout chrome ───────────────────────────────────────────────────
+
+const headerMount = document.getElementById("header-mount");
+const tabsMount = document.getElementById("tabs-mount");
+const footerMount = document.getElementById("footer-mount");
 const eegContainer = document.getElementById("eeg-container");
 const ppgContainer = document.getElementById("ppg-container");
 const accContainer = document.getElementById("acc-container");
-if (!eegContainer || !ppgContainer || !accContainer) {
-  throw new Error("layout containers missing — check index.html");
+if (
+  !headerMount ||
+  !tabsMount ||
+  !footerMount ||
+  !eegContainer ||
+  !ppgContainer ||
+  !accContainer
+) {
+  throw new Error("layout mounts/containers missing — check index.html");
 }
+
+const header = createHeader(headerMount, {
+  onConnect: () => {
+    connect().catch((err: unknown) => {
+      console.error(err);
+      setStatus(`error: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  },
+  onReplay: () => {
+    replay().catch((err: unknown) => {
+      console.error(err);
+      setStatus(`replay error: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  },
+});
+
+const footer = createFooter(footerMount);
+
+// Tab → view container map. 활성 탭의 컨테이너만 visible.
+const containers: Record<TabId, HTMLElement> = {
+  eeg: eegContainer,
+  ppg: ppgContainer,
+  acc: accContainer,
+};
+
+function activateTab(id: TabId): void {
+  for (const [k, el] of Object.entries(containers) as Array<[TabId, HTMLElement]>) {
+    el.style.display = k === id ? "" : "none";
+  }
+}
+
+createTabs(
+  tabsMount,
+  [
+    { id: "eeg", label: "🧠 EEG" },
+    { id: "ppg", label: "💓 PPG" },
+    { id: "acc", label: "📐 ACC" },
+  ],
+  (id) => {
+    activateTab(id as TabId);
+  },
+);
+activateTab("eeg"); // 디폴트.
+
+// Views — single instance per sensor, never disposed (page lifetime).
+// 비활성 탭의 view 도 background 에서 데이터를 받아 buffer 를 채워둔다 → 탭 전환 시
+// 즉시 그래프가 그려져 있음 (sensor-dashboard 와 동일 동작).
 const eegView = createEegView(eegContainer);
 const ppgView = createPpgView(ppgContainer);
 const accView = createAccView(accContainer);
 
+// ─── Status helpers ────────────────────────────────────────────────────────
+
 function setStatus(text: string): void {
-  const el = document.getElementById("status");
-  if (el) el.textContent = text;
+  header.setStatus(text);
+  // Footer status pill: streaming = live, disconnected = offline, 그 외 = idle.
+  if (text.startsWith("streaming")) footer.setStatus("live");
+  else if (text.toLowerCase().includes("disconnect")) footer.setStatus("offline");
+  else footer.setStatus("idle");
 }
 
 function setBattery(text: string): void {
-  const el = document.getElementById("battery");
-  if (el) el.textContent = text;
+  header.setBattery(text);
 }
+
+// ─── Sensor handlers ───────────────────────────────────────────────────────
 
 function onEegBytes(data: Uint8Array): void {
   const batch = parser.parseEeg(data);
   eegView.onBatch(batch);
+  footer.bumpMessage();
 }
 
 function onPpgBytes(data: Uint8Array): void {
   const batch = parser.parsePpg(data);
   ppgView.onBatch(batch);
+  footer.bumpMessage();
 }
 
 function onAccBytes(data: Uint8Array): void {
   const batch = parser.parseAcc(data);
   accView.onBatch(batch);
+  footer.bumpMessage();
 }
 
 function onBatBytes(data: Uint8Array): void {
   const status = parseBattery(data);
   setBattery(`Battery ${status.level}%`);
+  footer.bumpMessage();
 }
 
 const dispatch: Record<Sensor, (data: Uint8Array) => void> = {
@@ -94,6 +168,8 @@ function makeHandler(sensor: Sensor): (event: Event) => void {
   };
 }
 
+// ─── Connect (live BLE) ────────────────────────────────────────────────────
+
 async function connect(): Promise<void> {
   setStatus("requesting device …");
   const device = await navigator.bluetooth.requestDevice({
@@ -107,7 +183,6 @@ async function connect(): Promise<void> {
 
   device.addEventListener("gattserverdisconnected", () => {
     setStatus("disconnected");
-    // BLE 재연결 시 보간 시각 리셋 (spec §13).
     parser.resetEegTimestamps();
     parser.resetPpgTimestamps();
     parser.resetAccTimestamps();
@@ -140,13 +215,6 @@ async function connect(): Promise<void> {
 
   setStatus(`streaming from ${device.name ?? "?"}`);
 }
-
-document.getElementById("connect")?.addEventListener("click", () => {
-  connect().catch((err: unknown) => {
-    console.error(err);
-    setStatus(`error: ${err instanceof Error ? err.message : String(err)}`);
-  });
-});
 
 // ─── Replay (디바이스 없이 동작 검증, dev 전용) ──────────────────────────
 
@@ -200,10 +268,3 @@ async function replay(): Promise<void> {
   ]);
   setStatus("replay done");
 }
-
-document.getElementById("replay")?.addEventListener("click", () => {
-  replay().catch((err: unknown) => {
-    console.error(err);
-    setStatus(`replay error: ${err instanceof Error ? err.message : String(err)}`);
-  });
-});

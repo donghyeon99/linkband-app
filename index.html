@@ -7,94 +7,40 @@
     <style>
       :root {
         color-scheme: dark;
-        --bg-base: #0a0a0e;
-        --bg-elevated: #1d1d27;
-        --border: rgba(255, 255, 255, 0.08);
-        --text-primary: #e5e7eb;
-        --text-secondary: #a8a8b8;
-        --text-muted: #6b6b7e;
       }
       * { box-sizing: border-box; }
       body {
         margin: 0;
-        background: var(--bg-base);
-        color: var(--text-primary);
+        background: #0a0a0e;
+        color: #e5e7eb;
         font-family: system-ui, -apple-system, sans-serif;
         line-height: 1.4;
       }
       .page {
         max-width: 1100px;
         margin: 0 auto;
-        padding: 1.25rem;
       }
-      header {
-        margin-bottom: 1.5rem;
-        padding-bottom: 1rem;
-        border-bottom: 1px solid var(--border);
-      }
-      header h1 {
-        margin: 0 0 0.25rem 0;
-        font-size: 1.4rem;
-        font-weight: 700;
+      main {
+        padding: 1.25rem 1.5rem 0 1.5rem;
       }
       .note {
-        margin: 0 0 0.75rem 0;
-        font-size: 0.85rem;
-        color: var(--text-secondary);
-      }
-      .controls {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.5rem;
-        align-items: center;
-        margin-bottom: 0.5rem;
-      }
-      button {
-        padding: 0.5rem 1rem;
-        font-size: 0.9rem;
-        background: var(--bg-elevated);
-        color: var(--text-primary);
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        cursor: pointer;
-        font-family: inherit;
-      }
-      button:hover { background: #2a2a36; }
-      .status-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.5rem;
-        font-size: 0.85rem;
-      }
-      .pill {
-        padding: 0.3rem 0.7rem;
-        background: var(--bg-elevated);
-        border: 1px solid var(--border);
-        border-radius: 4px;
-        color: var(--text-secondary);
-        font-family: ui-monospace, "SF Mono", Consolas, monospace;
+        margin: 0 0 1rem 0;
+        font-size: 0.75rem;
+        color: #6b6b7e;
       }
     </style>
   </head>
   <body>
     <div class="page">
-      <header>
-        <h1>Link Band</h1>
-        <p class="note">Chromium (Chrome / Edge) 전용. HTTPS 또는 localhost. Replay 는 dev 전용.</p>
-        <div class="controls">
-          <button id="connect">Connect to LXB-…</button>
-          <button id="replay">Replay fixtures</button>
-        </div>
-        <div class="status-row">
-          <span class="pill" id="status">Disconnected</span>
-          <span class="pill" id="battery">Battery —</span>
-        </div>
-      </header>
+      <div id="header-mount"></div>
+      <div id="tabs-mount"></div>
       <main>
+        <p class="note">Chromium (Chrome / Edge) 전용. HTTPS 또는 localhost. Replay 는 dev 전용.</p>
         <div id="eeg-container"></div>
         <div id="ppg-container"></div>
         <div id="acc-container"></div>
       </main>
+      <div id="footer-mount"></div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

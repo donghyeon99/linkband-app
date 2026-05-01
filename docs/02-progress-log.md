@@ -49,6 +49,40 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 (저녁) — Tabs + Header + Footer 통합, 활성 탭만 표시 [PROGRESS]
+
+**무엇을**: layout.ts 의 헬퍼들을 main.ts 에 wiring + index.html 재구성. 3 sensor 가 동시에 펼쳐지던 구조 → sensor-dashboard 처럼 탭 시스템으로 한 번에 하나만 보임.
+
+**index.html**: 마운트 포인트만 남김.
+- `#header-mount` / `#tabs-mount` / `#footer-mount` (chrome)
+- `#eeg-container` / `#ppg-container` / `#acc-container` (views)
+- 인라인 header/footer 스타일·DOM 모두 제거. body 의 max-width / 폰트 같은 page-level CSS 만 유지.
+
+**main.ts**:
+- `createHeader(headerMount, { onConnect, onReplay })` — 버튼 콜백을 connect()/replay() 로 연결.
+- `createTabs(tabsMount, [eeg|ppg|acc], onChange)` — 탭 클릭 시 `activateTab(id)` 호출.
+- `activateTab(id)`: 활성 탭의 컨테이너만 `display: ""`, 나머지는 `display: "none"`. 비활성 탭의 view 도 background 에서 데이터를 받아 buffer 채워둠 → 탭 전환 시 즉시 그려져 있음 (sensor-dashboard 동일 동작).
+- `createFooter(footerMount)` — `footer.bumpMessage()` 가 `on{Eeg,Ppg,Acc,Bat}Bytes` 4 곳에서 호출됨 → Messages 카운트 + Rate 자동 갱신.
+- `setStatus(text)`: header pill + footer 상태색 (streaming → live, disconnect 포함 → offline, 그 외 → idle).
+- 디폴트 탭 = "eeg".
+
+**가드레일**:
+- 새 폴더 0
+- 새 dependency 0
+- 기존 view 파일 (eeg/ppg/acc-view) 수정 0 — 탭 토글은 외부에서 컨테이너 hide/show 만.
+
+**검증**:
+- `tsc --noEmit` 통과
+- `npm run test:run` 16/16 GREEN
+- `npm run build` 통과 (HTML 1.21 KB, JS 531.65 KB / gzip 178.95 KB — layout.ts 분만 증가)
+- Vite dev probe: `/` 200, mount points 존재 확인.
+
+**다음 단계**: VisualizerHeader (sticky 영역, 탭 위) 추가.
+
+**참조**: `index.html`, `src/main.ts`, `src/ui/layout.ts`.
+
+---
+
 ### 2026-05-02 (저녁) — ui/layout.ts (Header + Footer + Tabs 헬퍼) [PROGRESS]
 
 **무엇을**: sensor-dashboard `App.tsx` 의 sticky 탭 시스템 + `Header.tsx` + `Footer.tsx` 를 vanilla TS DOM 헬퍼로 단일 파일에 통합. main.ts 통합은 step 2.
