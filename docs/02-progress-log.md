@@ -49,6 +49,40 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 (밤) — DSP 1/4: biquad + EEG filter cascade [PROGRESS]
+
+**무엇을**: `src/linkband/dsp.ts` 신규 (단일 파일에 DSP 통합 — 다음 commits 도 같은 파일 확장). sensor-dashboard `src/lib/dsp/biquad.ts` + `eegPipeline.ts` 의 필터 부분 포팅.
+
+**fs 차이 처리** (스펙 §7 / §17 Q7):
+- sensor-dashboard `EEG_SAMPLE_RATE = 250` 가정. 우리 실측 확정값 = 500.
+- `EEG_SAMPLE_RATE = EEG_FS` (= 500) 로 import 한 literal 사용.
+- `EEG_TRANSIENT_SAMPLES` = `EEG_FS` (= 500, 1초 settling — sensor-dashboard 의 250 = 1s @ 250Hz 와 시간 등가).
+- NOTCH/HP/LP 계수는 `notchCoefs(500, 60, 2)`, `highpassCoefs(500, 1, 1/√2)`, `lowpassCoefs(500, 45, 1/√2)` — cutoff 주파수는 절대값이라 그대로, fs 만 갱신해 계수 재계산.
+
+**Exports** (sensor-dashboard 와 1:1 함수명 유지):
+- Biquad primitives: `BiquadState`, `BiquadCoefs`, `createBiquadState`, `notchCoefs`, `highpassCoefs`, `lowpassCoefs`, `bandpassCoefs`, `calcLinkbandBandpassQ`, `calcLinkbandNotchQ`, `processBiquad`.
+- EEG cascade: `EegChannelFilter`, `createEegChannelFilter`, `processEegSample`.
+
+**테스트** (`tests/dsp.test.ts`, 11 cases):
+- DSP fs (2): `EEG_SAMPLE_RATE === 500`, `EEG_TRANSIENT_SAMPLES === 500`
+- Notch 60Hz Q=2 (2): 60Hz sine <20% 감쇠, 10Hz sine >80% 통과
+- Highpass 1Hz Butterworth (2): DC 제거, 10Hz 통과
+- Lowpass 45Hz Butterworth (2): 10Hz 통과, 200Hz <15% 감쇠
+- Cascade (3): transient 동안 0 출력, 60Hz 차단, 10Hz 통과
+
+**가드레일**:
+- 새 폴더 0, 새 dependency 0
+- `chart.ts` / `parser.ts` / `models.ts` / `main.ts` / `layout.ts` / view 3개 수정 0
+- React / Zustand / 타 lib 0
+
+**검증**: `tsc --noEmit` 통과. `npm run test:run` 27/27 GREEN (16 + 11). `npm run build` 통과 (dsp.ts 미사용 → tree-shake, JS 사이즈 그대로).
+
+**다음**: spectrum (DFT, Morlet, band power, computeSpectrum / computeBandPower) — step 2.
+
+**참조**: `src/linkband/dsp.ts`, `tests/dsp.test.ts`, sensor-dashboard `src/lib/dsp/biquad.ts` + `eegPipeline.ts`.
+
+---
+
 ### 2026-05-02 (밤) — view resize() 노출, hidden-tab init 복구 [PROGRESS]
 
 **버그**: PPG Filtered chart, ACC Waveform / Magnitude 가 작게 표시됨. 원인 — `createPpgView` / `createAccView` 호출 시점에 컨테이너가 `display: none` (비활성 탭). ECharts.init 이 0×0 으로 measure → tiny 차트로 init. 탭 전환으로 컨테이너 가시화돼도 ECharts 인스턴스는 자동 resize 안 됨.
