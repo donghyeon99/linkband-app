@@ -3,41 +3,99 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Link Band — receive (spike)</title>
+    <title>Link Band</title>
     <style>
-      body { font-family: system-ui, sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
-      h1 { font-size: 1.5rem; }
-      button { padding: 0.5rem 1rem; font-size: 1rem; }
-      #status { margin: 1rem 0; padding: 0.5rem 1rem; background: #f3f3f3; border-radius: 4px; }
-      table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-      th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ddd; }
-      th { background: #fafafa; font-weight: 600; }
-      .detail { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 0.85rem; color: #555; }
-      .note { color: #666; font-size: 0.9rem; }
-      button + button { margin-left: 0.5rem; }
-      #eeg-chart { display: block; margin-top: 1rem; border: 1px solid #ddd; background: #fafafa; }
-      .chart-label { font-size: 0.85rem; color: #666; margin-top: 0.5rem; }
+      :root {
+        color-scheme: dark;
+        --bg-base: #0a0a0e;
+        --bg-elevated: #1d1d27;
+        --border: rgba(255, 255, 255, 0.08);
+        --text-primary: #e5e7eb;
+        --text-secondary: #a8a8b8;
+        --text-muted: #6b6b7e;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg-base);
+        color: var(--text-primary);
+        font-family: system-ui, -apple-system, sans-serif;
+        line-height: 1.4;
+      }
+      .page {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 1.25rem;
+      }
+      header {
+        margin-bottom: 1.5rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid var(--border);
+      }
+      header h1 {
+        margin: 0 0 0.25rem 0;
+        font-size: 1.4rem;
+        font-weight: 700;
+      }
+      .note {
+        margin: 0 0 0.75rem 0;
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+      }
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        align-items: center;
+        margin-bottom: 0.5rem;
+      }
+      button {
+        padding: 0.5rem 1rem;
+        font-size: 0.9rem;
+        background: var(--bg-elevated);
+        color: var(--text-primary);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        cursor: pointer;
+        font-family: inherit;
+      }
+      button:hover { background: #2a2a36; }
+      .status-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        font-size: 0.85rem;
+      }
+      .pill {
+        padding: 0.3rem 0.7rem;
+        background: var(--bg-elevated);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text-secondary);
+        font-family: ui-monospace, "SF Mono", Consolas, monospace;
+      }
     </style>
   </head>
   <body>
-    <h1>Link Band — receive (spike)</h1>
-    <p class="note">Chromium (Chrome / Edge) 전용. HTTPS 또는 localhost 에서만 동작.</p>
-    <button id="connect">Connect to LXB-…</button>
-    <button id="replay">Replay fixtures</button>
-    <div id="status">Disconnected</div>
-    <table>
-      <thead>
-        <tr><th>sensor</th><th>packets</th><th>bytes</th><th>last decoded sample</th></tr>
-      </thead>
-      <tbody>
-        <tr id="row-eeg"><td>EEG</td><td class="pkt">0</td><td class="byt">0</td><td class="detail"></td></tr>
-        <tr id="row-ppg"><td>PPG</td><td class="pkt">0</td><td class="byt">0</td><td class="detail"></td></tr>
-        <tr id="row-acc"><td>ACC</td><td class="pkt">0</td><td class="byt">0</td><td class="detail"></td></tr>
-        <tr id="row-bat"><td>Battery</td><td class="pkt">0</td><td class="byt">0</td><td class="detail"></td></tr>
-      </tbody>
-    </table>
-    <p class="chart-label">EEG ch1 (last ~4s @ 500Hz, y-range ±300 μV — saturated samples clamp to top/bottom edge)</p>
-    <canvas id="eeg-chart" width="600" height="100"></canvas>
+    <div class="page">
+      <header>
+        <h1>Link Band</h1>
+        <p class="note">Chromium (Chrome / Edge) 전용. HTTPS 또는 localhost. Replay 는 dev 전용.</p>
+        <div class="controls">
+          <button id="connect">Connect to LXB-…</button>
+          <button id="replay">Replay fixtures</button>
+        </div>
+        <div class="status-row">
+          <span class="pill" id="status">Disconnected</span>
+          <span class="pill" id="battery">Battery —</span>
+        </div>
+      </header>
+      <main>
+        <div id="eeg-container"></div>
+        <div id="ppg-container"></div>
+        <div id="acc-container"></div>
+      </main>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

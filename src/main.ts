@@ -1,15 +1,18 @@
-// Link Band frontend — scan/connect via Web Bluetooth, parse incoming BLE
-// notifications via `linkband/parser.ts`, and render decoded values per sensor.
+// Link Band frontend entry — Web Bluetooth + parser + ECharts views.
 //
 // Activation sequence mirrors spec §5.1: Battery notify first → EEG `start`
 // write → 1s wait → EEG/ACC/PPG notify in queue order. Same as the Python
-// `reference-py/linkband/spike_dump.py` reference.
+// `reference-py/linkband/spike_dump.py`.
 //
-// `on{Eeg,Ppg,Acc,Bat}Bytes` are the single processing path — both live BLE
-// handlers and (next milestone) replay funnel through them, so any logic
-// lives once and works for both sources.
+// Live BLE notifications and Replay (fetch the dump txt files from
+// reference-py) both feed the same on{Eeg,Ppg,Acc,Bat}Bytes pipeline,
+// which calls parser, then forwards the typed batch to the corresponding
+// view (src/ui/{eeg,ppg,acc}-view.ts). Battery is just a header-pill text.
 
 import { Parser, parseBattery } from "./linkband/parser";
+import { createAccView } from "./ui/acc-view";
+import { createEegView } from "./ui/eeg-view";
+import { createPpgView } from "./ui/ppg-view";
 import {
   ACC_NOTIFY,
   ACC_SERVICE,
@@ -24,126 +27,47 @@ import {
 
 type Sensor = "eeg" | "ppg" | "acc" | "bat";
 
-const counters: Record<Sensor, { packets: number; bytes: number }> = {
-  eeg: { packets: 0, bytes: 0 },
-  ppg: { packets: 0, bytes: 0 },
-  acc: { packets: 0, bytes: 0 },
-  bat: { packets: 0, bytes: 0 },
-};
-
 const parser = new Parser();
+
+// Views — single instance per sensor, never disposed (page lifetime).
+const eegContainer = document.getElementById("eeg-container");
+const ppgContainer = document.getElementById("ppg-container");
+const accContainer = document.getElementById("acc-container");
+if (!eegContainer || !ppgContainer || !accContainer) {
+  throw new Error("layout containers missing — check index.html");
+}
+const eegView = createEegView(eegContainer);
+const ppgView = createPpgView(ppgContainer);
+const accView = createAccView(accContainer);
 
 function setStatus(text: string): void {
   const el = document.getElementById("status");
   if (el) el.textContent = text;
 }
 
-function bumpCounter(sensor: Sensor, byteLength: number): void {
-  counters[sensor].packets += 1;
-  counters[sensor].bytes += byteLength;
-  const row = document.getElementById(`row-${sensor}`);
-  if (!row) return;
-  row.querySelector(".pkt")!.textContent = String(counters[sensor].packets);
-  row.querySelector(".byt")!.textContent = String(counters[sensor].bytes);
-}
-
-function setDetail(sensor: Sensor, text: string): void {
-  const el = document.querySelector(`#row-${sensor} .detail`);
+function setBattery(text: string): void {
+  const el = document.getElementById("battery");
   if (el) el.textContent = text;
 }
 
-// ─── EEG ch1 ring buffer + canvas ──────────────────────────────────────────
-// 마지막 EEG_BUFFER_MAX 샘플(=4s @ 500Hz) 만 유지하는 가벼운 ring buffer.
-// requestAnimationFrame 루프에서 폴리라인 한 줄로 그린다. 차트 라이브러리 X.
-const EEG_BUFFER_MAX = 2000;
-const EEG_Y_MIN = -300; // μV
-const EEG_Y_MAX = 300;
-const eegBuffer: number[] = [];
-
-function pushEegSamples(samples: Float64Array): void {
-  for (const v of samples) eegBuffer.push(v);
-  if (eegBuffer.length > EEG_BUFFER_MAX) {
-    eegBuffer.splice(0, eegBuffer.length - EEG_BUFFER_MAX);
-  }
-}
-
-function drawEeg(): void {
-  const canvas = document.getElementById("eeg-chart") as HTMLCanvasElement | null;
-  if (!canvas) return;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-
-  const w = canvas.width;
-  const h = canvas.height;
-  const yRange = EEG_Y_MAX - EEG_Y_MIN;
-
-  ctx.clearRect(0, 0, w, h);
-
-  // 0 μV reference line.
-  ctx.strokeStyle = "#ddd";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  const yMid = h - ((0 - EEG_Y_MIN) / yRange) * h;
-  ctx.moveTo(0, yMid);
-  ctx.lineTo(w, yMid);
-  ctx.stroke();
-
-  if (eegBuffer.length === 0) return;
-
-  ctx.strokeStyle = "#0070f3";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let i = 0; i < eegBuffer.length; i++) {
-    const x = (i / EEG_BUFFER_MAX) * w;
-    // saturated 샘플(±336,083 μV)이 캔버스 밖으로 나가 안 보이는 걸 막기 위해 clamp.
-    const clamped = Math.max(EEG_Y_MIN, Math.min(EEG_Y_MAX, eegBuffer[i]));
-    const y = h - ((clamped - EEG_Y_MIN) / yRange) * h;
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-}
-
-function chartLoop(): void {
-  drawEeg();
-  requestAnimationFrame(chartLoop);
-}
-requestAnimationFrame(chartLoop);
-
 function onEegBytes(data: Uint8Array): void {
-  bumpCounter("eeg", data.byteLength);
   const batch = parser.parseEeg(data);
-  pushEegSamples(batch.ch1Uv);
-  const last = batch.ch1Uv.length - 1;
-  if (last < 0) return;
-  setDetail(
-    "eeg",
-    `ch1=${batch.ch1Uv[last].toFixed(1)}μV  ch2=${batch.ch2Uv[last].toFixed(1)}μV  leadOff=${
-      batch.leadOff[last] ? "Y" : "N"
-    }  t=${batch.tDevice.toFixed(2)}s`,
-  );
+  eegView.onBatch(batch);
 }
 
 function onPpgBytes(data: Uint8Array): void {
-  bumpCounter("ppg", data.byteLength);
   const batch = parser.parsePpg(data);
-  const last = batch.red.length - 1;
-  if (last < 0) return;
-  setDetail("ppg", `RED=${batch.red[last]}  IR=${batch.ir[last]}`);
+  ppgView.onBatch(batch);
 }
 
 function onAccBytes(data: Uint8Array): void {
-  bumpCounter("acc", data.byteLength);
   const batch = parser.parseAcc(data);
-  const last = batch.x.length - 1;
-  if (last < 0) return;
-  setDetail("acc", `x=${batch.x[last]}  y=${batch.y[last]}  z=${batch.z[last]}`);
+  accView.onBatch(batch);
 }
 
 function onBatBytes(data: Uint8Array): void {
-  bumpCounter("bat", data.byteLength);
   const status = parseBattery(data);
-  setDetail("bat", `level=${status.level}%`);
+  setBattery(`Battery ${status.level}%`);
 }
 
 const dispatch: Record<Sensor, (data: Uint8Array) => void> = {
@@ -224,9 +148,7 @@ document.getElementById("connect")?.addEventListener("click", () => {
   });
 });
 
-// ─── Replay (디바이스 없이 동작 검증) ─────────────────────────────────────
-// reference-py/tests/fixtures/real{1,}/{eeg,ppg,acc}.txt 의 dump 를 fetch 후
-// on*Bytes 파이프라인에 흘려보낸다 — 라이브 BLE 와 같은 경로.
+// ─── Replay (디바이스 없이 동작 검증, dev 전용) ──────────────────────────
 
 async function replayStream(
   url: string,
@@ -253,7 +175,6 @@ async function replayStream(
 }
 
 async function probeFixtureRoot(): Promise<string | null> {
-  // 사용자 spec: real1/ 우선, 없으면 real/. 둘 다 없으면 null.
   for (const root of [
     "/reference-py/tests/fixtures/real1",
     "/reference-py/tests/fixtures/real",
@@ -272,7 +193,6 @@ async function replay(): Promise<void> {
     return;
   }
   setStatus(`replaying from ${root} …`);
-  // EEG/PPG/ACC 동시 — 각자 자기 cadence 로. Promise.all 로 모두 끝나면 done.
   await Promise.all([
     replayStream(`${root}/eeg.txt`, onEegBytes, 50),
     replayStream(`${root}/ppg.txt`, onPpgBytes, 560),

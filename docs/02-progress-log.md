@@ -49,6 +49,47 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 — main.ts wiring + index.html 레이아웃 갱신 [PROGRESS]
+
+**무엇을**: 자율모드 마지막 커밋 — sensor-dashboard 형식 frontend 미러 완료. 3 view 인스턴스화 + index.html 레이아웃 교체.
+
+**index.html**:
+- 기존 `<table>` + per-row counters + inline `<canvas>` 제거.
+- 새 구조: `<header>` (title + Connect/Replay 버튼 + status pill + battery pill) + `<main>` 안에 view 컨테이너 3개 (`#eeg-container` / `#ppg-container` / `#acc-container`).
+- CSS 토큰화 (`--bg-base`, `--bg-elevated`, `--border`, `--text-*`) — view 들의 inline style 의 `uiColors` 와 일치.
+
+**src/main.ts**:
+- 인라인 canvas/buffer 코드 (eegBuffer, drawEeg, chartLoop) 제거.
+- `createEegView` / `createPpgView` / `createAccView` 인스턴스 1회 생성 (페이지 라이프타임 유지, 디스커넥트 시 dispose 안 함).
+- `on{Eeg,Ppg,Acc}Bytes(data)` 가 parser 호출 후 view 의 `onBatch(...)` 만 호출. UI 갱신 로직은 view 내부.
+- Battery 는 그대로 — header 의 `#battery` pill 에 `Battery 87%` 텍스트.
+- 라이브 BLE / Replay 단일 파이프라인 유지.
+
+**검증**:
+- `tsc --noEmit` 통과
+- `npm run test:run` 16/16 GREEN (parser 테스트 영향 없음)
+- `npm run build` 성공 — JS 7.43 KB → **525.56 KB** (echarts 인라인). gzip 177 KB. 500 KB chunk warning 은 echarts 자체 크기로 예상된 동작 (sensor-dashboard 도 동일 규모).
+- Vite dev probe: `/` (200, 2.8KB) + `/src/main.ts` (200, 20.7KB transformed) + `/reference-py/tests/fixtures/real1/eeg.txt` (200, 205.7KB) — 모두 OK.
+
+**가드레일 준수 최종 점검**:
+- `src/ui/` 외 새 폴더 0 ✓ (`src/ui/` 에 정확히 6 파일)
+- `echarts` 외 새 dependency 0 ✓
+- DSP/metrics 코드 0 ✓ (placeholder/raw 만)
+- `parser.ts` / `models.ts` / spec / progress-log 사용 규칙 그대로 유지
+
+**사용자 검증 (돌아오시면)**:
+- `npm run dev` → http://localhost:5173 → Replay 클릭:
+  - 🧠 EEG 섹션: ch1/ch2 라인 (saturated 라 ±150 μV 경계에서 clip 되어 평평하게 표시)
+  - 💓 PPG 섹션: Raw IR/RED 라인 + Filtered/BPM placeholder 패널 + 14 MetricCards (모두 "—")
+  - 📐 ACC 섹션: x/y/z 3-line (auto-scale)
+- 그 후 Connect 클릭 → 라이브 BLE 도 같은 view 로 흐름 확인.
+
+**다음 단계 (사용자 결정)**: DSP — sensor-dashboard `src/lib/dsp/` 의 biquad / eegPipeline / ppgPipeline / spectrum 을 TS 그대로 포팅. placeholder 패널들이 활성화됨.
+
+**참조**: `src/main.ts`, `index.html`, `src/ui/*.ts` 6 파일.
+
+---
+
 ### 2026-05-02 — ui/acc-view.ts (3-axis raw chart) [PROGRESS]
 
 **무엇을**: ACC 3-axis raw 차트 단일 패널. sensor-dashboard `ACCVisualizer.tsx` 의 3 패널 중 raw 만 포팅 (magnitude / motion cards 는 DSP 영역).
