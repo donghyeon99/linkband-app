@@ -49,6 +49,27 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 — echarts + ui/theme + ui/chart 도입 [PROGRESS]
+
+**무엇을**: sensor-dashboard frontend 미러링의 첫 커밋. 차트 라이브러리 echarts 도입 + 공통 스타일/래퍼 만들기.
+
+- `npm i echarts` (v6.0.0).
+- `src/ui/theme.ts`: sensor-dashboard `lib/charts/theme.ts` 포팅. `chartColors` (EEG ch1/ch2, PPG ir/red, ACC x/y/z, magnitude, axis label, grid line), `axisLabelStyle`, `splitLineStyle`, `legendTextStyle`, `uiColors` (dark theme bg/text 토큰 추가), `rgba()`, `areaGradient()`.
+- `src/ui/chart.ts`: ECharts core + 모듈(`LineChart`, `GridComponent`, `TooltipComponent`, `LegendComponent`, `CanvasRenderer`) 등록. `createChart(container, option) → ChartHandle` 가 init + auto-resize + dispose 묶어줌. sensor-dashboard `optionBuilders.ts` 의 `buildRealtimeLineOption` / `buildMultiLineOption` 도 이 파일에 합침.
+
+**가드레일 준수**:
+- `src/ui/` 폴더 신설 (1개) — 허용 범위 내.
+- echarts 외 새 dependency 없음.
+- echarts core + 필요한 모듈만 import (sensor-dashboard 와 동일 tree-shaking 패턴) → 번들 크기 최적화.
+
+**검증**: `tsc --noEmit` 통과. `npm run build` JS 크기 7.43 KB 그대로 (theme/chart 가 main.ts 에 import 안 돼 tree-shake — 다음 커밋들에서 사용되면 늘어남, 의도된 동작).
+
+**다음 단계**: ui/metric-card.ts (PPG metrics 패널용 단일 카드 위젯).
+
+**참조**: `src/ui/theme.ts`, `src/ui/chart.ts`, `package.json`, sensor-dashboard `src/lib/charts/`.
+
+---
+
 ### 2026-05-01 (저녁) — Replay 버튼 + EEG ch1 Canvas, 디바이스 없이 종단 검증 [PROGRESS]
 
 **무엇을**: 자율모드 5단 커밋의 마지막 항목. 디바이스 없이 dump replay 만으로 전체 파이프라인 (parser + UI + chart) 동작 확인 가능.
