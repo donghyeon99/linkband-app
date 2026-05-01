@@ -49,6 +49,29 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 — ui/eeg-view.ts (Visualizer + LeadOff banner) [PROGRESS]
+
+**무엇을**: sensor-dashboard `EEGVisualizer.tsx` 의 메인 패널을 vanilla TS 로 미러링.
+
+**구성** (createEegView(container) → { onBatch, dispose }):
+- Section panel: `🧠 EEG Brain Wave Analysis` 헤더 + subtitle.
+- LeadOff banner: 본 batch 의 leadOff 샘플 중 하나라도 true 면 표시 (간단 트리거 — 채널 분리는 spec §17 Q2 까지 보류).
+- Multi-line ECharts: Ch1 (FP1, blue) + Ch2 (FP2, red) 두 라인 한 차트. y 범위 ±150 μV (sensor-dashboard `RawDataChart` 와 동일). saturated raw 샘플은 차트 경계에서 clip.
+- Window: 2000 samples (4s @ 500Hz) — sensor-dashboard 의 `EEG_BUFFER_SIZE=1000 @ 250Hz` 를 fs 보정한 값. 사용자 spec ("4-8초 = 2000-4000 sample @ 500Hz") 의 하한.
+
+**단순화 (이번 범위 = 시각화만)**:
+- sensor-dashboard 의 ch1/ch2 별도 차트 → 한 차트 두 라인 (사용자 spec).
+- DSP 관련 sub-패널 (SignalQualityChart, PowerSpectrumChart, BandPowerCards, IndexCards) 제외 — DSP 단계에서 본 view 확장 또는 별도 view 로 결정.
+- LeadOff 채널 분리 안 함 (firmware 가 채널별인지 확정 후).
+
+**검증**: `tsc --noEmit` 통과. `npm run test:run` 16/16 GREEN. `npm run build` 7.43 KB (main.ts 가 아직 import 안 함).
+
+**다음 단계**: ui/ppg-view.ts (raw IR/RED + Filtered/BPM placeholders + MetricsCards).
+
+**참조**: `src/ui/eeg-view.ts`, sensor-dashboard `components/eeg/EEGVisualizer.tsx` + `RawDataChart.tsx` + `LeadOffBanner.tsx`.
+
+---
+
 ### 2026-05-02 — ui/metric-card.ts (PPG metrics 패널용 단일 카드 위젯) [PROGRESS]
 
 **무엇을**: sensor-dashboard `components/ui/MetricCard.tsx` + `ppg/PPGMetricsCards.tsx` 의 카드 시각 구조를 vanilla TS DOM 으로 단순화 포팅. PPG metrics 패널에서 12-15개 인스턴스 사용 예정.
