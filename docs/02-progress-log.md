@@ -49,6 +49,32 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-01 (저녁) — parser.py 본체 작성, 15/15 GREEN [PROGRESS]
+
+**무엇을**: `linkband/parser.py` (170+줄) 작성. P0 단계 parser 본체 완성.
+- 모듈 레벨: `_decode_acc_sample(buf) → (x, y, z)` (16-bit LE), `parse_battery(data) → BatteryStatus` (stateless), `_header_seconds(packet) → float`.
+- `class Parser`: 인스턴스 상태로 센서별 마지막 샘플 시각 보간. `parse_eeg/ppg/acc` + `reset_*_timestamps`.
+- 각 메서드 docstring 에 spec § 출처 + Kotlin SDK 의 어떤 라인을 미러/회피했는지 명시.
+- 24-bit BE 부호확장은 `int.from_bytes(..., signed=True)` 한 줄로 해결 (직접 `& 0x800000` 검사 불필요).
+- ACC 는 `np.frombuffer(data, dtype="<i2", count=n*3, offset=4).reshape(-1, 3)` 로 LE 인터리브 한 번에 분리.
+
+**검증**: `uv run pytest tests/test_parser.py -v` → **15 passed in 0.21s**.
+`uv run ruff check linkband/ tests/` → All checks passed.
+
+15 케이스 breakdown:
+- TestHeaderTimestamp: 2 (timeRaw=32768/0)
+- TestEegConversion: 5 (LSB μV, max+, 부호확장, leadOff bool/raw, 179B real fixture)
+- TestPpgSignExtension: 2 (high-byte 0x80+ 비음수, 172B real fixture)
+- TestAccDecode16LE: 3 (16-bit LE, LSB+MSB 둘 다 영향, 184B real fixture)
+- TestBattery: 1
+- TestEegTimestampContinuity: 2 (1/500 step 보간, reset 후 재초기화)
+
+**다음 단계**: P0 의 마지막 항목 `linkband/ble.py` (실 디바이스 BLE 매니저). spike_dump.py 흐름을 클래스화 + 자동 재연결 + spec §5.1 활성화 시퀀스 정식 구현. Q8 (PPG stop-early) 재구독 로직도 여기서.
+
+**참조**: `linkband/parser.py`, `tests/test_parser.py` (15 cases pass), spec §6–§11 §13.
+
+---
+
 ### 2026-05-01 (오후) — test_parser.py + models.py 새 spec 반영 [PROGRESS]
 
 **무엇을**: spec 갱신에 맞춰 두 파일 동기화.
