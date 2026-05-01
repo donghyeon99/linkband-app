@@ -556,6 +556,97 @@ export function peaksToRrSeconds(peaks: number[], fs: number): number[] {
   return rr;
 }
 
+// ─── HRV metrics (RR-based, 표준 HRV literature) ──────────────────────────
+
+export interface HrvMetrics {
+  /** mean RR (ms) — Average NN interval. */
+  avnn: number;
+  /** std deviation of RR (ms) — population (divide by N). */
+  sdnn: number;
+  /** RMS of successive differences (ms). */
+  rmssd: number;
+  /** std deviation of successive differences (ms). */
+  sdsd: number;
+  /** % of |Δ RR| > 50 ms. */
+  pnn50: number;
+  /** % of |Δ RR| > 20 ms. */
+  pnn20: number;
+}
+
+/** RR ms 배열 → 6 standard HRV metrics. 빈 배열이면 모두 0. */
+export function computeHrvMetrics(rrIntervalsMs: number[]): HrvMetrics {
+  const n = rrIntervalsMs.length;
+  if (n === 0) return { avnn: 0, sdnn: 0, rmssd: 0, sdsd: 0, pnn50: 0, pnn20: 0 };
+
+  let sum = 0;
+  for (const rr of rrIntervalsMs) sum += rr;
+  const avnn = sum / n;
+
+  let varSum = 0;
+  for (const rr of rrIntervalsMs) varSum += (rr - avnn) ** 2;
+  const sdnn = Math.sqrt(varSum / n);
+
+  if (n < 2) return { avnn, sdnn, rmssd: 0, sdsd: 0, pnn50: 0, pnn20: 0 };
+
+  // Successive differences (NN[i+1] - NN[i]).
+  const m = n - 1;
+  const diffs: number[] = new Array(m);
+  for (let i = 0; i < m; i++) diffs[i] = rrIntervalsMs[i + 1] - rrIntervalsMs[i];
+
+  let sqSum = 0;
+  for (const d of diffs) sqSum += d * d;
+  const rmssd = Math.sqrt(sqSum / m);
+
+  let dMean = 0;
+  for (const d of diffs) dMean += d;
+  dMean /= m;
+  let dVarSum = 0;
+  for (const d of diffs) dVarSum += (d - dMean) ** 2;
+  const sdsd = Math.sqrt(dVarSum / m);
+
+  let p50 = 0;
+  let p20 = 0;
+  for (const d of diffs) {
+    const a = Math.abs(d);
+    if (a > 50) p50++;
+    if (a > 20) p20++;
+  }
+  const pnn50 = (p50 / m) * 100;
+  const pnn20 = (p20 / m) * 100;
+
+  return { avnn, sdnn, rmssd, sdsd, pnn50, pnn20 };
+}
+
+export interface HeartRate {
+  /** average instantaneous BPM = 60000 / mean(RR). */
+  bpm: number;
+  /** BPM at min RR (= max instantaneous BPM). */
+  hrMax: number;
+  /** BPM at max RR (= min instantaneous BPM). */
+  hrMin: number;
+}
+
+/** RR ms 배열 → 평균/최대/최소 BPM. 빈 배열이면 모두 0. */
+export function computeHeartRate(rrIntervalsMs: number[]): HeartRate {
+  if (rrIntervalsMs.length === 0) return { bpm: 0, hrMax: 0, hrMin: 0 };
+
+  let sum = 0;
+  let minRr = Number.POSITIVE_INFINITY;
+  let maxRr = Number.NEGATIVE_INFINITY;
+  for (const rr of rrIntervalsMs) {
+    sum += rr;
+    if (rr < minRr) minRr = rr;
+    if (rr > maxRr) maxRr = rr;
+  }
+  const avgRr = sum / rrIntervalsMs.length;
+
+  return {
+    bpm: avgRr > 0 ? 60000 / avgRr : 0,
+    hrMax: minRr > 0 ? 60000 / minRr : 0,
+    hrMin: maxRr > 0 ? 60000 / maxRr : 0,
+  };
+}
+
 /** Band power → 7 EEG analysis indices. spectrum 결과를 spectrum-based 비율로 변환. */
 export function computeEegIndices(power: ComputedEegPower): EegIndices {
   const b = power.bands;

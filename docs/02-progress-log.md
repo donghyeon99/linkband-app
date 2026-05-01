@@ -49,6 +49,37 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 (밤) — PPG DSP 3/5: RR-based HRV metrics [PROGRESS]
+
+**무엇을**: `src/linkband/dsp.ts` 에 RR-base HRV/HR 산식 추가.
+
+**Exports** (모두 표준 HRV literature 산식, 외부 의존 없음):
+- `HrvMetrics` interface — 6 fields: avnn, sdnn, rmssd, sdsd, pnn50, pnn20
+- `computeHrvMetrics(rrIntervalsMs) → HrvMetrics`:
+  - **AVNN** = mean(RR)
+  - **SDNN** = std deviation of RR (population: ÷N)
+  - 인접 차분 (Δ_i = RR[i+1] - RR[i]) 기반:
+  - **RMSSD** = √(mean of Δ²)
+  - **SDSD** = std deviation of Δ
+  - **PNN50** = % of |Δ| > 50 ms
+  - **PNN20** = % of |Δ| > 20 ms
+  - n=0 → 모든 값 0; n=1 → AVNN/SDNN 만, 나머지 0
+- `HeartRate` interface — bpm, hrMax, hrMin
+- `computeHeartRate(rrIntervalsMs) → HeartRate`:
+  - **bpm** = 60000 / AVNN (평균)
+  - **hrMax** = 60000 / min(RR) (= 최대 instantaneous)
+  - **hrMin** = 60000 / max(RR) (= 최소 instantaneous)
+
+**가드레일**: 새 폴더 0, 새 dependency 0. parser/models/main/layout/views 수정 0.
+
+**검증**: `tsc --noEmit` 통과. `npm run test:run` 45/45 GREEN (테스트는 step 4 에서 추가).
+
+**다음**: HRV 산식 테스트 — step 4.
+
+**참조**: `src/linkband/dsp.ts`.
+
+---
+
 ### 2026-05-02 (밤) — PPG DSP 2/5: filter + peak detection 테스트 [PROGRESS]
 
 **무엇을**: `tests/dsp.test.ts` 에 PPG 필터 + peak 검출 테스트 추가 (8 cases).
