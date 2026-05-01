@@ -49,6 +49,32 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 (밤) — PPG DSP 4/5: HRV math 테스트 [PROGRESS]
+
+**무엇을**: `tests/dsp.test.ts` 에 HRV/HR 산식 테스트 8 cases.
+
+**computeHrvMetrics (5 tests)**:
+- 균일 RR (모두 833ms): AVNN=833, SDNN=RMSSD=SDSD=PNN50=PNN20=0
+- alternating ±33ms (800/866): SDNN=33, RMSSD=66, PNN50=PNN20=100% (Δ=66 > 50)
+- 분기 검증 (Δ=30): PNN50=0 (≤50), PNN20=100 (>20)
+- 빈 배열: 모든 6 fields 0
+- 단일 RR: AVNN 만, 차분 메트릭 0
+
+**computeHeartRate (3 tests)**:
+- 균일 833ms: BPM≈72, hrMax=hrMin=BPM
+- RR [500, 833, 1000]: hrMax=120 (60000/500), hrMin=60 (60000/1000), bpm = 60000/avg
+- 빈 배열: 0/0/0
+
+**가드레일**: 새 폴더 0, 새 dependency 0. dsp.ts 수정 0 (테스트만).
+
+**검증**: `tsc --noEmit` 통과. `npm run test:run` **53/53 GREEN** (45 + 8).
+
+**다음**: ppg-view DSP wiring — step 5 (마지막).
+
+**참조**: `tests/dsp.test.ts`.
+
+---
+
 ### 2026-05-02 (밤) — PPG DSP 3/5: RR-based HRV metrics [PROGRESS]
 
 **무엇을**: `src/linkband/dsp.ts` 에 RR-base HRV/HR 산식 추가.

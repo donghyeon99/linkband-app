@@ -15,6 +15,8 @@ import {
   PPG_SAMPLE_RATE,
   PPG_TRANSIENT_SAMPLES,
   calculateEegSqi,
+  computeHeartRate,
+  computeHrvMetrics,
   computeBandPower,
   computeEegIndices,
   computeEegPower,
@@ -279,6 +281,78 @@ describe("detectPpgPeaks", () => {
     const peaks = [0, 50, 100, 150, 200];
     const rr = peaksToRrSeconds(peaks, 50);
     expect(rr).toEqual([1.0, 1.0, 1.0, 1.0]);
+  });
+});
+
+describe("computeHrvMetrics", () => {
+  it("균일 RR (모두 833ms) → AVNN=833, SDNN=0, RMSSD=0, SDSD=0, PNN=0", () => {
+    const m = computeHrvMetrics([833, 833, 833, 833, 833]);
+    expect(m.avnn).toBe(833);
+    expect(m.sdnn).toBe(0);
+    expect(m.rmssd).toBe(0);
+    expect(m.sdsd).toBe(0);
+    expect(m.pnn50).toBe(0);
+    expect(m.pnn20).toBe(0);
+  });
+
+  it("alternating ±33ms (800/866) → SDNN=33, RMSSD=66, PNN50=PNN20=100", () => {
+    // mean = 833, deviations all ±33 → SDNN = 33.
+    // diffs = [+66, -66, +66, -66, +66] → RMSSD = √mean(66²) = 66.
+    // |Δ|=66 > 50 and > 20 → PNN50/PNN20 = 100%.
+    const m = computeHrvMetrics([800, 866, 800, 866, 800, 866]);
+    expect(m.avnn).toBe(833);
+    expect(m.sdnn).toBeCloseTo(33, 5);
+    expect(m.rmssd).toBeCloseTo(66, 5);
+    expect(m.pnn50).toBe(100);
+    expect(m.pnn20).toBe(100);
+  });
+
+  it("PNN50 / PNN20 분기 검증 — Δ=30 시 PNN50=0, PNN20=100", () => {
+    // 차분 30ms 만 → 50 임계값 위반 X, 20 임계값 위반 O.
+    const m = computeHrvMetrics([800, 830, 800, 830, 800, 830]);
+    expect(m.pnn50).toBe(0);
+    expect(m.pnn20).toBe(100);
+  });
+
+  it("빈 배열 → 모든 값 0", () => {
+    expect(computeHrvMetrics([])).toEqual({
+      avnn: 0,
+      sdnn: 0,
+      rmssd: 0,
+      sdsd: 0,
+      pnn50: 0,
+      pnn20: 0,
+    });
+  });
+
+  it("단일 RR → AVNN 만 set, 차분 메트릭은 0", () => {
+    const m = computeHrvMetrics([900]);
+    expect(m.avnn).toBe(900);
+    expect(m.sdnn).toBe(0);
+    expect(m.rmssd).toBe(0);
+    expect(m.sdsd).toBe(0);
+    expect(m.pnn50).toBe(0);
+    expect(m.pnn20).toBe(0);
+  });
+});
+
+describe("computeHeartRate", () => {
+  it("균일 833ms RR → BPM ≈ 72, hrMax = hrMin = BPM", () => {
+    const hr = computeHeartRate([833, 833, 833]);
+    expect(hr.bpm).toBeCloseTo(72.03, 1);
+    expect(hr.hrMax).toBeCloseTo(72.03, 1);
+    expect(hr.hrMin).toBeCloseTo(72.03, 1);
+  });
+
+  it("RR 변동 [500, 833, 1000] → hrMax≈120, hrMin≈60, bpm 평균", () => {
+    const hr = computeHeartRate([500, 833, 1000]);
+    expect(hr.hrMax).toBeCloseTo(120, 0); // 60000/500 = 120
+    expect(hr.hrMin).toBeCloseTo(60, 0); // 60000/1000 = 60
+    expect(hr.bpm).toBeCloseTo(60000 / ((500 + 833 + 1000) / 3), 0);
+  });
+
+  it("빈 배열 → 모든 값 0", () => {
+    expect(computeHeartRate([])).toEqual({ bpm: 0, hrMax: 0, hrMin: 0 });
   });
 });
 
