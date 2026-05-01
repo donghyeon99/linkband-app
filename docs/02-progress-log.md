@@ -49,6 +49,25 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 (밤) — PPG DSP 2/5: filter + peak detection 테스트 [PROGRESS]
+
+**무엇을**: `tests/dsp.test.ts` 에 PPG 필터 + peak 검출 테스트 추가 (8 cases).
+
+**Tests**:
+- PPG 필터 pipeline (4): fs/transient 상수, 1.2Hz sine (72 BPM 펄스대역) 통과 (>80%), 0.1Hz drift 차단 (<20%), transient 동안 0
+- detectPpgPeaks (3): 1Hz pulse 신호 5개 정확 검출 (인덱스 [5,55,105,155,205]), flat signal → 빈 배열, min-interval (150 BPM 상한) 강제 검증
+- peaksToRrSeconds (1): [0,50,100,150,200] @ 50fs → [1.0, 1.0, 1.0, 1.0]
+
+**가드레일**: 새 폴더 0, 새 dependency 0. dsp.ts 수정 0 (테스트만 추가).
+
+**검증**: `tsc --noEmit` 통과. `npm run test:run` **45/45 GREEN** (37 + 8).
+
+**다음**: HRV math (RR-base 9 metrics: AVNN/SDNN/RMSSD/SDSD/PNN50/PNN20 + BPM/HR Max/Min) — step 3.
+
+**참조**: `tests/dsp.test.ts`.
+
+---
+
 ### 2026-05-02 (밤) — PPG DSP 1/5: filter pipeline + peak detection [PROGRESS]
 
 **무엇을**: `src/linkband/dsp.ts` 에 PPG 필터 + peak 검출 추가. sensor-dashboard `ppgPipeline.ts` 의 filter/SQI 직접 포팅 (fs=50 동일, 스케일 없음). Peak 검출은 자체 작성 — sensor-dashboard 프런트엔드에 없음 (서버 의존).

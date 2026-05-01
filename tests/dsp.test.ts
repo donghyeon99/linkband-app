@@ -12,6 +12,8 @@ import {
   EEG_BANDS,
   EEG_SAMPLE_RATE,
   EEG_TRANSIENT_SAMPLES,
+  PPG_SAMPLE_RATE,
+  PPG_TRANSIENT_SAMPLES,
   calculateEegSqi,
   computeBandPower,
   computeEegIndices,
@@ -19,11 +21,15 @@ import {
   computeSpectrum,
   createBiquadState,
   createEegChannelFilter,
+  createPpgChannelFilter,
+  detectPpgPeaks,
   highpassCoefs,
   lowpassCoefs,
   notchCoefs,
+  peaksToRrSeconds,
   processBiquad,
   processEegSample,
+  processPpgSample,
 } from "../src/linkband/dsp";
 
 const FS = EEG_SAMPLE_RATE;
@@ -192,6 +198,87 @@ describe("computeEegIndices (own derivation)", () => {
     ] as const) {
       expect(Number.isFinite(idx[key])).toBe(true);
     }
+  });
+});
+
+describe("PPG filter pipeline (HP 0.5Hz → LP 5Hz @ 50Hz)", () => {
+  const PPG_FS = 50;
+
+  function ppgSine(freq: number, n: number, amp = 100): number[] {
+    const out: number[] = [];
+    for (let i = 0; i < n; i++) {
+      out.push(amp * Math.sin((2 * Math.PI * freq * i) / PPG_FS));
+    }
+    return out;
+  }
+
+  it("PPG_SAMPLE_RATE = 50, PPG_TRANSIENT_SAMPLES = 150", () => {
+    expect(PPG_SAMPLE_RATE).toBe(50);
+    expect(PPG_TRANSIENT_SAMPLES).toBe(150);
+  });
+
+  it("1.2Hz sine (= 72 BPM 펄스대역) 통과 (transient 후 >80%)", () => {
+    const filter = createPpgChannelFilter();
+    const out = ppgSine(1.2, 1500, 100).map((s) => processPpgSample(filter, s));
+    const settled = out.slice(PPG_TRANSIENT_SAMPLES + 100);
+    expect(maxAbs(settled)).toBeGreaterThan(80);
+  });
+
+  it("0.1Hz drift (HP cutoff 0.5 미만) 차단 (<20%)", () => {
+    const filter = createPpgChannelFilter();
+    const out = ppgSine(0.1, 2000, 100).map((s) => processPpgSample(filter, s));
+    const settled = out.slice(PPG_TRANSIENT_SAMPLES + 200);
+    expect(maxAbs(settled)).toBeLessThan(20);
+  });
+
+  it("transient (PPG_TRANSIENT_SAMPLES) 동안 0", () => {
+    const filter = createPpgChannelFilter();
+    for (let i = 0; i < PPG_TRANSIENT_SAMPLES; i++) {
+      expect(processPpgSample(filter, 100)).toBe(0);
+    }
+  });
+});
+
+describe("detectPpgPeaks", () => {
+  it("1Hz 펄스 신호 (5초) → peak 5개, 50 샘플 간격", () => {
+    const fs = 50;
+    const len = 250;
+    const signal = new Array(len).fill(0);
+    for (let i = 0; i < len; i++) {
+      const pos = i % 50;
+      if (pos < 10) signal[i] = Math.sin((pos / 10) * Math.PI) * 100;
+    }
+    const peaks = detectPpgPeaks(signal, fs);
+    expect(peaks.length).toBe(5);
+    // peaks at 5, 55, 105, 155, 205
+    expect(peaks).toEqual([5, 55, 105, 155, 205]);
+  });
+
+  it("flat signal (모두 0) → peak 없음", () => {
+    expect(detectPpgPeaks(new Array(200).fill(0), 50)).toEqual([]);
+  });
+
+  it("min interval 0.4s = 150 BPM 상한 강제 — 너무 가까운 peak 제거", () => {
+    const fs = 50;
+    // 자연 peak rate = 300 BPM (매 10 샘플 마다 peak). min interval 20 sample
+    // (= 150 BPM) 강제 후 절반만 통과 → peak 매 20 샘플 마다 (= 150 BPM 정확).
+    const signal = new Array(200).fill(0);
+    for (let i = 0; i < 200; i++) {
+      if (i % 10 === 5) signal[i] = 100;
+      else signal[i] = 50; // baseline (threshold = 60 이라 peak 만 통과)
+    }
+    const peaks = detectPpgPeaks(signal, fs);
+    expect(peaks.length).toBe(10); // 200 sample / 20 sample interval
+    // 인접 peak 간격이 정확히 minInterval (20) 인지
+    for (let i = 1; i < peaks.length; i++) {
+      expect(peaks[i] - peaks[i - 1]).toBe(20);
+    }
+  });
+
+  it("peaksToRrSeconds — 5 peaks at 50 samples apart, fs=50 → 4 RR × 1.0s", () => {
+    const peaks = [0, 50, 100, 150, 200];
+    const rr = peaksToRrSeconds(peaks, 50);
+    expect(rr).toEqual([1.0, 1.0, 1.0, 1.0]);
   });
 });
 
