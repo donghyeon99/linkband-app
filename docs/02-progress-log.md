@@ -49,6 +49,51 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 (밤) — ACC view 4-row + Magnitude (sensor-dashboard 미러) [PROGRESS]
+
+**무엇을**: `src/ui/acc-view.ts` 재작성. sensor-dashboard `ACCVisualizer.tsx` 의 4-row 레이아웃 미러링 + Magnitude 차트 추가.
+
+**구조**:
+1. **Hero card** — "📐 ACC Acceleration Analysis" + 설명 (X/Y/Z 색 강조 inline 텍스트, sensor-dashboard `<strong className="text-red-400">` 미러) + 3 InfoBadge ("3-axis (X, Y, Z)" / "25Hz sampling" / "Unit: g (gravitational acceleration)").
+2. **Full-width**: **3-Axis Acceleration Waveform** — h3 + 설명 + X/Y/Z multi-line 차트 (기존 차트 보존).
+3. **Full-width**: **Magnitude** — h3 + 설명 + 단일 라인 area+smooth 차트.
+4. **Full-width**: **📐 Movement Analysis** — placeholder ("DSP not yet implemented").
+
+**Magnitude 계산** (DSP 가 아닌 단순 산술):
+```ts
+for (let i = 0; i < batch.x.length; i++) {
+  magBuf.push(Math.sqrt(x*x + y*y + z*z));  // Int16 → number 자동 승급
+}
+```
+- buffer cap 200 (8s @ 25Hz, x/y/z 와 동일 윈도우).
+- y 범위 0..30000 고정 (1g ≈ 16384 LSB 기준 여유).
+- 색 = `chartColors.magnitude` (#facc15, sensor-dashboard `AccMagnitudeChart` 동일).
+
+**InfoBadge** (sensor-dashboard `components/ui/InfoBadge.tsx` 미러):
+- shadcn Badge 의존 없이 vanilla `<span>` + style.
+- `rgba(magnitude, 0.15)` 배경 + 0.35 border + magnitude color text.
+
+**가드레일**:
+- 새 폴더 0, 새 dependency 0, DSP 0 (Magnitude 는 단순 norm, filter/threshold 아님)
+- chart.ts / parser.ts / models.ts / main.ts / eeg-view.ts / ppg-view.ts 수정 0
+- Tailwind / shadcn / React / Zustand 도입 0
+
+**검증**:
+- `tsc --noEmit` 통과
+- `npm run test:run` 16/16 GREEN
+- `npm run build` 통과 (JS 539.14 → 541.99 KB, +2.85 KB)
+- Vite dev probe: `/` 200, `/src/ui/{acc,ppg}-view.ts` 둘 다 200
+
+**사용자 검증 (돌아오시면)**: `npm run dev` → ACC 탭:
+- Hero + 3 yellow InfoBadge
+- Waveform: 기존 X/Y/Z 라인 (정지 상태 ≈ Z=-8192, 움직임 시 변동)
+- Magnitude: ~16800 부근 (1g 중력) 기준 area chart, 머리 흔들 때 spike
+- Motion Analysis: placeholder
+
+**참조**: `src/ui/acc-view.ts`, sensor-dashboard `components/acc/ACCVisualizer.tsx` + `AccMagnitudeChart.tsx`.
+
+---
+
 ### 2026-05-02 (밤) — PPG view 3-row 구조 (sensor-dashboard 미러) [PROGRESS]
 
 **무엇을**: `src/ui/ppg-view.ts` 재작성. sensor-dashboard `PPGVisualizer.tsx` 의 3-row 레이아웃 정확히 미러링.
