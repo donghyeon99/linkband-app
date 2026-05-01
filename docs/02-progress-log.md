@@ -49,6 +49,96 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 — sdk.linkband.store 전 영역 비교 (3 agents 병렬) [VERIFIED]
+
+**무엇을**: 사용자 지적("결과가 다르다") 후속 — 배포 빌드 source map 에서 visualization 컴포넌트 10개 추가 추출 + 3 agent 병렬 dispatch (PPG DSP / EEG DSP / Visualization). 직전 [VERIFIED] entry 보다 한 단계 깊은 비교.
+
+**핵심 발견 — 사용자 체감 "다른 결과" 의 진짜 원인**
+
+#### 🔴 1. EEG Indices 산식이 완전히 다름 (최대 영향)
+이전 비교에서 UNKNOWN 으로 두었던 부분 — agent 가 deployed `EEGSignalProcessor.ts:237-266` 에서 산식 발굴.
+
+| Index | Deployed (ratio of dB-sums, ch1 only) | Ours (dB difference, ch1+ch2 평균) |
+|---|---|---|
+| `focusIndex` | `β / (α + θ)` | `β − α` |
+| `relaxationIndex` | `α / (α + β)` | `α − β` |
+| `stressIndex` | `(β + γ) / (α + θ)` | `(β+γ)/2 − (α+θ)/2` |
+| `cognitiveLoad` | `θ / α` | `θ − α` |
+| `hemisphericBalance` | `(L_α − R_α) / (L_α + R_α)` clamped [-1,1] | `ch2_α − ch1_α` (no normalize) |
+| `emotionalStability` | `(α + θ) / γ` | `−│stressIndex│` |
+| `totalPower` | `Σ(ch1.delta+...+gamma)` (sum, ch1 only) | sum of mean(ch1+ch2) |
+
+**완전히 다른 차원** — focusIndex 가 우리 ~10dB, deployed ~0.5-1.0 (unitless ratio).
+
+#### 🔴 2. Band power 집계 방식
+- Deployed `EEGSignalProcessor.ts:841`: 각 band 안의 freq 별 dB 를 **sum**.
+- Ours `dsp.ts:331`: **mean** (`dbSum / count`).
+- 결과: ours 가 deployed 의 1/N (band 폭 만큼) 으로 작음. 모든 index 에 cascade.
+
+#### 🟠 3. PPG peak detection (전체 BPM 정확도 직접 영향)
+- Deployed `detectPeaksAdaptiveThreshold` (L659-686): **local 0.5s 윈도우** + `localMean + 0.6·(localMax-localMean)` + **5-pt shape** (`> i±1, ±2`).
+- Ours `detectPpgPeaks` (dsp.ts:522): **global** `max·0.6` + 3-pt shape.
+- Drifting baseline 에서 약한 peak 놓침.
+
+#### 🟠 4. PPG BPM 후처리 (안정성 직접 영향)
+Deployed: IQR 1.5× 필터 + 300-1500ms 생리 필터 + 가중평균 (최근 weight↑) + 40-200 BPM 검증 + CV>0.5 시 0.9 감소 + 반올림.
+Ours: 단순 `60000 / mean(RR)`. 후처리 0개.
+
+#### 🟠 5. PPG filter 형태
+- Deployed: `biquadjs.makeBandpassFilter(1.0, 5.0, 50)` 단일 + DC 사전 제거.
+- Ours: HP(0.5) + LP(5.0) cascade, Butterworth Q.
+- HP cutoff 0.5 vs 1.0 → 우리 신호에 0.5-1Hz drift 가 더 들어옴.
+
+#### 🟠 6. PPG HRV RR source
+- Deployed `detectPeaksForHRV` (L1247-1277): **raw IR** (필터 없음) — LF/HF (0.04-0.4Hz) 보존 위해.
+- Ours: filtered IR. LF/HF 미구현이지만 도입 시 잘못된 값.
+
+**Visualization 격차 (영향: 시각 일치도)**
+
+| 항목 | Deployed | Ours | Priority |
+|---|---|---|---|
+| **EEG Indices 카드** | rich status card (dot color by threshold, value, status message, "안정화" badge, sample count, tooltip) | 단순 MetricCard (label/value/unit) | 🔴 |
+| **EEG BandPower 카드** | mini bar chart (overall + Ch1 + Ch2 normalized) | 평면 MetricCard 단일 숫자 | 🔴 |
+| **PPG Indices 카드** | 14 rich cards 4-4-3-3 fixed grid + threshold colors | 17 평면 cards (3 extras Stability/Intensity/TotalPower deployed 에 없음) | 🟠 |
+| **EEG Spectrum** | y 0..85 dB + Δ/θ/α/β/γ markArea bands + area gradient | y -40..60 + bands 없음 + area 없음 | 🟠 |
+| **EEG SQI** | Ch1 green / Ch2 amber 별도 색 + gradient | 둘 다 yellow 단일 색 | 🟡 |
+| **PPG SQI** | green `#10b981` + smooth + no area | yellow + area | 🟡 |
+| **PPG Filtered** | Red 먼저 / IR 나중, smooth | IR 먼저 / Red 나중, no smooth | 🟡 |
+| **PPG BPM trend chart** | 없음 | 있음 (우리 추가) | DIFF (우리 enhancement) |
+| **Lead-off banner** | per-channel (fp1/fp2 분리) | 통합 (any → both ON) | 🟡 |
+
+**EEG SQI freq 분산 스케일** (`dsp.ts:412`): ours `var/22500` (= 150²) vs deployed `var/1000`. 우리가 22.5× 관대해서 SQI 가 더 높게 나옴.
+
+**EEG band 범위**: deployed delta **0.5**-4 / gamma 30-**50**, ours 1-4 / 30-45.
+
+**Match (변경 불필요)**: HRV math (AVNN/SDNN/RMSSD/SDSD/PNN50/PNN20 산식 1:1), EEG SQI 70/30 weighting, sample rate (각자 환경에 맞음 — 우리 500 raw / deployed 250 server-decimated), filter 라이브러리 호환 (RBJ biquad).
+
+**우선순위 정정 목록 (다음 청크 후보)**
+
+| # | 항목 | 영향 | 위치 |
+|---|---|---|---|
+| 1 | EEG indices 산식 → ratio of dB-sums | 🔴 | `dsp.ts:651-678` |
+| 2 | Band power aggregation: mean → sum | 🔴 | `dsp.ts:331` |
+| 3 | PPG adaptive local peak detection | 🟠 | `dsp.ts:522` (replace) |
+| 4 | PPG BPM 후처리 (IQR + weighted + validate) | 🟠 | `dsp.ts:630` (wrap) |
+| 5 | PPG filter HP 0.5→1.0 + bandpass form | 🟠 | `dsp.ts:457` |
+| 6 | PPG HRV RR from raw IR (별도 detector) | 🟠 | `ppg-view.ts:341` |
+| 7 | EEG band 범위 (delta 0.5, gamma 50) | 🟡 | `dsp.ts:174,178` |
+| 8 | EEG indices/bandpower rich card 시각화 | 🔴 | `eeg-view.ts:344-360` |
+| 9 | EEG spectrum y range + band markArea | 🟠 | `eeg-view.ts:200-225` |
+| 10 | EEG SQI freq variance scale 22500→1000 | 🟡 | `dsp.ts:412` |
+
+**다음 단계 제안**: 정정 작업을 청크로 나누어 진행 — DSP 산식 수정 (1,2,7,10 + 5,6) 한 청크, PPG peak/BPM 알고리즘 교체 (3,4) 한 청크, 시각화 rich-card upgrade (8,9) 한 청크.
+
+**가드레일 준수**: 코드/spec/test 수정 0. progress-log entry 만 추가. `npm run test:run` 53/53 그대로.
+
+**참조**:
+- 추출된 deployed sources: `C:/Users/cowgo/AppData/Local/Temp/sdk_*.{ts,tsx,js}` (DSP 3 + visualization 10 = 13 파일)
+- 우리 코드: `src/linkband/dsp.ts`, `src/ui/{eeg,ppg,acc}-view.ts`, `src/ui/chart.ts`
+- Agent 출력 3개 (PPG DSP / EEG DSP / Visualization) 종합
+
+---
+
 ### 2026-05-02 — eeg-view DSP throttle 도입 (브라우저 stall 수정) [FIX]
 
 **증상**: 사용자가 Replay 시작 후 일정 시간 뒤 "갑자기 멈췄어 그래프가 안그려져" 보고. EEG 탭의 차트들이 갱신을 멈춤.
