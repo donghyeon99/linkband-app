@@ -1,33 +1,49 @@
 /**
- * PPG view — sensor-dashboard `PPGVisualizer.tsx` 의 3-row 레이아웃 미러링.
+ * PPG view — sensor-dashboard `PPGVisualizer.tsx` 의 4-row 레이아웃 + DSP wired.
  *
- * 구조 (sensor-dashboard 동일):
+ * 구조 (DSP active):
  *   1. Hero card        — "💓 PPG Pulse Analysis" + 설명
- *   2. 2-col Row        — Filtered PPG Signal | PPG SQI
- *                          좌: raw IR/RED 차트 + "Pre-filter pulse waveform —
- *                              DSP filter pending" 캡션
- *                          우: SQI 순수 placeholder
- *   3. Full-width       — 💓 Heart Rate Variability Metrics (14 cards, "—")
+ *   2. 2-col Row        — Filtered PPG Signal | PPG SQI (실 차트)
+ *   3. Full-width       — 💓 BPM Trend (실 차트, ~60s 윈도우)
+ *   4. Full-width       — 💓 HRV Metrics (17 cards: 9 active, 8 placeholder)
+ *
+ * Filter chain: HP 0.5Hz → LP 5Hz @ 50Hz (sensor-dashboard `ppgPipeline.ts` 그대로).
+ * Peak detection: own derivation (adaptive threshold + min interval). RR-base HRV.
  *
  * 외부 인터페이스:
  *     const view = createPpgView(container)
  *     view.onBatch(ppgBatch)
+ *     view.resize()
  *     view.dispose()
  */
+import {
+  type PpgChannelFilter,
+  calculatePpgSqi,
+  computeHeartRate,
+  computeHrvMetrics,
+  createPpgChannelFilter,
+  detectPpgPeaks,
+  peaksToRrSeconds,
+  processPpgSample,
+} from "../linkband/dsp";
 import { PPG_FS, type PpgBatch } from "../linkband/models";
-import { type ChartHandle, buildMultiLineOption, createChart } from "./chart";
+import {
+  type ChartHandle,
+  buildMultiLineOption,
+  buildRealtimeLineOption,
+  createChart,
+} from "./chart";
 import { createMetricCard, type MetricCardHandle } from "./metric-card";
 import { chartColors, uiColors } from "./theme";
 
 const PPG_BUFFER_SIZE = 400; // ~8s @ 50Hz
-const PPG_WINDOW_SEC = PPG_BUFFER_SIZE / PPG_FS; // = 8 — xAxis 고정 윈도우
+const PPG_WINDOW_SEC = PPG_BUFFER_SIZE / PPG_FS; // = 8
+const BPM_HISTORY_SIZE = 100; // ~56s @ 1 batch/0.56s
+const BPM_WINDOW_SEC = 60;
 const STYLE_ID = "ppg-view-style";
 
 export interface PpgViewHandle {
   onBatch(batch: PpgBatch): void;
-  /** 컨테이너 가시화 직후 호출 — hidden tab init 케이스에서 ECharts 가 0×0 으로
-   *  measure 된 걸 정상 사이즈로 다시 잡아준다. placeholder div 들은 chart 가
-   *  아니라 resize 불필요. */
   resize(): void;
   dispose(): void;
 }
@@ -56,7 +72,7 @@ function ensureStyles(): void {
   document.head.appendChild(s);
 }
 
-// ─── DOM helpers (eeg-view.ts 와 동일 패턴) ──────────────────────────────
+// ─── DOM helpers ──────────────────────────────────────────────────────────
 function makeCard(): HTMLElement {
   const card = document.createElement("div");
   card.style.cssText = `
@@ -103,26 +119,6 @@ function makeBanner(text: string): HTMLElement {
   return b;
 }
 
-function makePlaceholder(label: string, height: string): HTMLElement {
-  const ph = document.createElement("div");
-  ph.style.cssText = `
-    width: 100%;
-    height: ${height};
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: ${uiColors.bgBase};
-    border: 1px dashed ${uiColors.border};
-    border-radius: 6px;
-    color: ${uiColors.textMuted};
-    font-size: 0.85rem;
-    text-align: center;
-    padding: 0 1rem;
-  `;
-  ph.textContent = `${label} — DSP not yet implemented`;
-  return ph;
-}
-
 // ─── createPpgView ────────────────────────────────────────────────────────
 
 export function createPpgView(container: HTMLElement): PpgViewHandle {
@@ -131,7 +127,7 @@ export function createPpgView(container: HTMLElement): PpgViewHandle {
   const root = document.createElement("section");
   root.className = "ppg-view-root";
 
-  // (1) Hero card.
+  // (1) Hero.
   const hero = makeCard();
   hero.appendChild(makeCardTitle("💓 PPG Pulse Analysis", 2));
   const heroSub = document.createElement("p");
@@ -146,57 +142,57 @@ export function createPpgView(container: HTMLElement): PpgViewHandle {
   const row = document.createElement("div");
   row.className = "ppg-grid-2col";
 
-  // ── Filtered card (raw chart + caption) ─────────────────────────────────
+  // ── Filtered card ───────────────────────────────────────────────────────
   const filteredCard = makeCard();
   filteredCard.appendChild(makeCardTitle("🔧 Filtered PPG Signal"));
   filteredCard.appendChild(
     makeCardDesc(
-      "Red/IR LED signals passed through a 0.5-5.0Hz bandpass filter to isolate the heart-beat pattern (DC removed).",
+      "Red/IR LED signals through 0.5-5.0Hz bandpass (DC removed, heartbeat band).",
     ),
   );
-
-  // PPG LeadOff banner — sensor-dashboard `PPGLeadOffBanner.tsx` (`ppg-filter` context)
-  // 위치 미러. parser 가 PPG 별도 lead-off 정보를 추출하지 않으므로 (firmware 패킷에
-  // PPG 전용 lead-off 바이트 없음) DOM 만 두고 toggle 없음 — 시각 구조만 미러.
+  // PPG LeadOff banner — DOM only (parser 가 PPG 별도 lead-off 정보 없음).
   const leadOffBanner = makeBanner(
     "⚠ PPG sensor contact issue — signal quality may be degraded",
   );
   filteredCard.appendChild(leadOffBanner);
-
   const filteredHost = document.createElement("div");
   filteredHost.style.cssText = "width: 100%; height: 220px;";
   filteredCard.appendChild(filteredHost);
-
-  const filteredCaption = document.createElement("p");
-  filteredCaption.textContent = "Pre-filter pulse waveform — DSP filter pending";
-  filteredCaption.style.cssText = `
-    margin: 0.5rem 0 0 0;
-    font-size: 0.7rem;
-    color: ${uiColors.textMuted};
-    text-align: center;
-    font-style: italic;
-  `;
-  filteredCard.appendChild(filteredCaption);
-
   row.appendChild(filteredCard);
 
-  // ── SQI card (pure placeholder) ─────────────────────────────────────────
+  // ── SQI card (real chart) ───────────────────────────────────────────────
   const sqiCard = makeCard();
   sqiCard.appendChild(makeCardTitle("📈 PPG Signal Quality Index (SQI)"));
   sqiCard.appendChild(
-    makeCardDesc("Signal quality and electrode contact monitoring."),
+    makeCardDesc(
+      "Filtered PPG amplitude-based SQI (25-sample window, threshold 250).",
+    ),
   );
-  sqiCard.appendChild(makePlaceholder("PPG SQI chart", "240px"));
+  const sqiHost = document.createElement("div");
+  sqiHost.style.cssText = "width: 100%; height: 220px;";
+  sqiCard.appendChild(sqiHost);
   row.appendChild(sqiCard);
 
   root.appendChild(row);
 
-  // (3) HRV Metrics card (full-width).
+  // (3) BPM Trend (full-width).
+  const bpmTrendCard = makeCard();
+  bpmTrendCard.appendChild(makeCardTitle("💓 BPM Trend"));
+  bpmTrendCard.appendChild(
+    makeCardDesc("Heart rate over time — derived from peak detection on filtered IR signal."),
+  );
+  const bpmTrendHost = document.createElement("div");
+  bpmTrendHost.style.cssText = "width: 100%; height: 200px;";
+  bpmTrendCard.appendChild(bpmTrendHost);
+  bpmTrendCard.style.marginBottom = "1.5rem";
+  root.appendChild(bpmTrendCard);
+
+  // (4) HRV Metrics (full-width).
   const metricsCard = makeCard();
   metricsCard.appendChild(makeCardTitle("💓 Heart Rate Variability Metrics"));
   metricsCard.appendChild(
     makeCardDesc(
-      "Real-time PPG analysis — heart rate, HRV, stress, and 11 more indices. All placeholder until DSP/metrics land.",
+      "9 RR-based metrics (active) + 8 advanced metrics (placeholder until LF/HF FFT, SpO₂, stress/stability/intensity arrive).",
     ),
   );
   const metricsGrid = document.createElement("div");
@@ -206,34 +202,30 @@ export function createPpgView(container: HTMLElement): PpgViewHandle {
 
   container.appendChild(root);
 
-  // 14 metric cards — 라벨/단위/색은 sensor-dashboard `PPGMetricsCards.tsx` 그대로.
-  const metricSpec: Array<{
-    label: string;
-    unit?: string;
-    dotColor?: string;
-    decimals?: number;
-  }> = [
-    { label: "BPM", unit: "bpm", dotColor: chartColors.bpm, decimals: 0 },
-    { label: "SpO₂", unit: "%", dotColor: "#4ecdc4", decimals: 1 },
-    { label: "HR Max", unit: "bpm", dotColor: chartColors.bpm, decimals: 0 },
-    { label: "HR Min", unit: "bpm", dotColor: chartColors.bpm, decimals: 0 },
-    { label: "Stress", dotColor: "#f59e0b", decimals: 2 },
-    { label: "RMSSD", unit: "ms", dotColor: "#a855f7", decimals: 1 },
-    { label: "SDNN", unit: "ms", dotColor: "#a855f7", decimals: 1 },
-    { label: "SDSD", unit: "ms", dotColor: "#a855f7", decimals: 1 },
-    { label: "LF Power", dotColor: "#3b82f6", decimals: 1 },
-    { label: "HF Power", dotColor: "#10b981", decimals: 1 },
-    { label: "LF/HF", dotColor: "#f59e0b", decimals: 2 },
-    { label: "AVNN", unit: "ms", dotColor: "#a855f7", decimals: 1 },
-    { label: "pNN50", unit: "%", dotColor: "#a855f7", decimals: 1 },
-    { label: "pNN20", unit: "%", dotColor: "#a855f7", decimals: 1 },
-  ];
-  const metricCards: MetricCardHandle[] = metricSpec.map((spec) =>
-    createMetricCard(metricsGrid, spec),
-  );
-  for (const c of metricCards) c.update(null);
+  // 17 metric cards. 9 active (HR/SDNN/RMSSD/SDSD/AVNN/PNN50/PNN20/HR Max/HR Min)
+  // + 8 placeholder (SpO₂/LF/HF/LF-HF/Stress/Stability/Intensity/Total Power).
+  const m = {
+    bpm: createMetricCard(metricsGrid, { label: "Heart Rate", unit: "bpm", dotColor: chartColors.bpm, decimals: 0 }),
+    spo2: createMetricCard(metricsGrid, { label: "SpO₂", unit: "%", dotColor: "#4ecdc4", decimals: 1 }),
+    hrMax: createMetricCard(metricsGrid, { label: "HR Max", unit: "bpm", dotColor: chartColors.bpm, decimals: 0 }),
+    hrMin: createMetricCard(metricsGrid, { label: "HR Min", unit: "bpm", dotColor: chartColors.bpm, decimals: 0 }),
+    stress: createMetricCard(metricsGrid, { label: "Stress Index", dotColor: "#f59e0b", decimals: 2 }),
+    rmssd: createMetricCard(metricsGrid, { label: "RMSSD", unit: "ms", dotColor: "#a855f7", decimals: 1 }),
+    sdnn: createMetricCard(metricsGrid, { label: "SDNN", unit: "ms", dotColor: "#a855f7", decimals: 1 }),
+    sdsd: createMetricCard(metricsGrid, { label: "SDSD", unit: "ms", dotColor: "#a855f7", decimals: 1 }),
+    lfPower: createMetricCard(metricsGrid, { label: "LF Power", dotColor: "#3b82f6", decimals: 1 }),
+    hfPower: createMetricCard(metricsGrid, { label: "HF Power", dotColor: "#10b981", decimals: 1 }),
+    lfHf: createMetricCard(metricsGrid, { label: "LF/HF", dotColor: "#f59e0b", decimals: 2 }),
+    avnn: createMetricCard(metricsGrid, { label: "AVNN", unit: "ms", dotColor: "#a855f7", decimals: 1 }),
+    pnn50: createMetricCard(metricsGrid, { label: "pNN50", unit: "%", dotColor: "#a855f7", decimals: 1 }),
+    pnn20: createMetricCard(metricsGrid, { label: "pNN20", unit: "%", dotColor: "#a855f7", decimals: 1 }),
+    stability: createMetricCard(metricsGrid, { label: "Stability", dotColor: "#14b8a6", decimals: 2 }),
+    intensity: createMetricCard(metricsGrid, { label: "Intensity", dotColor: "#a855f7", decimals: 2 }),
+    totalPower: createMetricCard(metricsGrid, { label: "Total Power", dotColor: "#6b6b7e", decimals: 1 }),
+  } as const satisfies Record<string, MetricCardHandle>;
+  for (const c of Object.values(m)) c.update(null);
 
-  // ─── Chart (raw IR/RED multi-line) ──────────────────────────────────────
+  // ─── Charts ──────────────────────────────────────────────────────────────
   const filteredChart: ChartHandle = createChart(
     filteredHost,
     buildMultiLineOption({
@@ -241,49 +233,153 @@ export function createPpgView(container: HTMLElement): PpgViewHandle {
         { name: "IR", color: chartColors.ir },
         { name: "Red", color: chartColors.red },
       ],
-      yName: "ADC counts",
-      yNameGap: 60,
+      yName: "filtered",
+      yMin: -250,
+      yMax: 250,
+      yNameGap: 50,
       tooltipFormatter: (params: unknown) => {
         const arr = params as Array<{ seriesName: string; value: [number, number] }>;
         if (!Array.isArray(arr) || arr.length === 0) return "";
         const t = arr[0]?.value?.[0] ?? 0;
         const lines = [`t = ${t.toFixed(2)}s`];
-        for (const p of arr) lines.push(`${p.seriesName}: ${p.value[1]}`);
+        for (const p of arr) lines.push(`${p.seriesName}: ${p.value[1].toFixed(1)}`);
         return lines.join("<br/>");
       },
     }),
   );
 
-  // ─── Buffers + onBatch ──────────────────────────────────────────────────
-  const irBuf: number[] = [];
-  const redBuf: number[] = [];
+  const sqiChart: ChartHandle = createChart(
+    sqiHost,
+    buildRealtimeLineOption({
+      color: chartColors.magnitude,
+      yName: "SQI %",
+      yMin: 0,
+      yMax: 100,
+      yNameGap: 40,
+      area: true,
+      tooltipFormatter: (params: unknown) => {
+        const arr = params as Array<{ value: [number, number] }>;
+        if (!Array.isArray(arr) || arr.length === 0) return "";
+        const t = arr[0]?.value?.[0] ?? 0;
+        const v = arr[0]?.value?.[1] ?? 0;
+        return `t = ${t.toFixed(2)}s<br/>SQI: ${v.toFixed(0)}%`;
+      },
+    }),
+  );
 
-  function pushAndTrim(buf: number[], values: Int32Array): void {
-    for (const v of values) buf.push(v);
-    if (buf.length > PPG_BUFFER_SIZE) buf.splice(0, buf.length - PPG_BUFFER_SIZE);
+  const bpmTrendChart: ChartHandle = createChart(
+    bpmTrendHost,
+    buildRealtimeLineOption({
+      color: chartColors.bpm,
+      yName: "BPM",
+      yMin: 40,
+      yMax: 160,
+      yNameGap: 40,
+      smooth: true,
+      tooltipFormatter: (params: unknown) => {
+        const arr = params as Array<{ value: [number, number] }>;
+        if (!Array.isArray(arr) || arr.length === 0) return "";
+        const t = arr[0]?.value?.[0] ?? 0;
+        const v = arr[0]?.value?.[1] ?? 0;
+        return `t = ${t.toFixed(1)}s<br/>BPM: ${v.toFixed(0)}`;
+      },
+    }),
+  );
+
+  // ─── State (filters + buffers) ──────────────────────────────────────────
+  const filterIr: PpgChannelFilter = createPpgChannelFilter();
+  const filterRed: PpgChannelFilter = createPpgChannelFilter();
+
+  const irBuf: number[] = []; // filtered IR
+  const redBuf: number[] = []; // filtered Red
+  const sqiBuf: number[] = []; // PPG SQI %
+  const bpmHistoryBuf: number[] = []; // BPM trend (one entry per batch)
+
+  function pushAndTrim<T>(buf: T[], v: T, max: number): void {
+    buf.push(v);
+    if (buf.length > max) buf.splice(0, buf.length - max);
   }
 
   return {
     onBatch(batch: PpgBatch): void {
-      pushAndTrim(irBuf, batch.ir);
-      pushAndTrim(redBuf, batch.red);
+      // 샘플별 filter cascade 적용 — filtered IR/Red 만 buffer 에 push.
+      const filteredIr: number[] = new Array(batch.ir.length);
+      const filteredRed: number[] = new Array(batch.red.length);
+      for (let i = 0; i < batch.ir.length; i++) {
+        const fi = processPpgSample(filterIr, batch.ir[i]);
+        const fr = processPpgSample(filterRed, batch.red[i]);
+        filteredIr[i] = fi;
+        filteredRed[i] = fr;
+        pushAndTrim(irBuf, fi, PPG_BUFFER_SIZE);
+        pushAndTrim(redBuf, fr, PPG_BUFFER_SIZE);
+      }
 
       const fs = batch.fs;
       const irLast = Math.max(irBuf.length - 1, 0);
       const redLast = Math.max(redBuf.length - 1, 0);
-      // xAxis 는 PPG_WINDOW_SEC 고정 → 라인은 우측에서 좌측으로 자라남.
+
+      // Filtered chart 갱신 (newest = t=0, fixed window).
       const irData: Array<[number, number]> = irBuf.map((v, i) => [(i - irLast) / fs, v]);
       const redData: Array<[number, number]> = redBuf.map((v, i) => [(i - redLast) / fs, v]);
       filteredChart.chart.setOption({
         xAxis: { min: -PPG_WINDOW_SEC, max: 0 },
         series: [{ data: irData }, { data: redData }],
       });
+
+      // SQI: filtered IR 기준 (sensor-dashboard 와 동일). 마지막 batch 길이만큼 append.
+      const sqi = calculatePpgSqi(irBuf);
+      const newCount = batch.ir.length;
+      for (const v of sqi.slice(-newCount)) pushAndTrim(sqiBuf, v, PPG_BUFFER_SIZE);
+      const sqiLast = Math.max(sqiBuf.length - 1, 0);
+      const sqiData: Array<[number, number]> = sqiBuf.map((v, i) => [(i - sqiLast) / fs, v]);
+      sqiChart.chart.setOption({
+        xAxis: { min: -PPG_WINDOW_SEC, max: 0 },
+        series: [{ data: sqiData }],
+      });
+
+      // Peak detection on filtered IR → RR seconds → HRV/HR.
+      const peaks = detectPpgPeaks(irBuf, fs);
+      const rrSeconds = peaksToRrSeconds(peaks, fs);
+      const rrMs = rrSeconds.map((s) => s * 1000);
+
+      // 9 active metric cards 갱신 — RR ≥ 1 일 때 의미 있는 값.
+      if (rrMs.length >= 1) {
+        const hr = computeHeartRate(rrMs);
+        const hrv = computeHrvMetrics(rrMs);
+        m.bpm.update(hr.bpm);
+        m.hrMax.update(hr.hrMax);
+        m.hrMin.update(hr.hrMin);
+        m.avnn.update(hrv.avnn);
+        m.sdnn.update(hrv.sdnn);
+        m.rmssd.update(hrv.rmssd);
+        m.sdsd.update(hrv.sdsd);
+        m.pnn50.update(hrv.pnn50);
+        m.pnn20.update(hrv.pnn20);
+
+        // BPM trend buffer — 1 entry per batch.
+        pushAndTrim(bpmHistoryBuf, hr.bpm, BPM_HISTORY_SIZE);
+        const bpmLast = Math.max(bpmHistoryBuf.length - 1, 0);
+        // 1 entry per ~0.56s — 시간축은 -BPM_WINDOW_SEC..0.
+        const bpmData: Array<[number, number]> = bpmHistoryBuf.map((v, i) => {
+          const dt = (i - bpmLast) * (PPG_BUFFER_SIZE / fs / batch.ir.length); // batch interval ≈ 0.56s
+          return [dt, v];
+        });
+        bpmTrendChart.chart.setOption({
+          xAxis: { min: -BPM_WINDOW_SEC, max: 0 },
+          series: [{ data: bpmData }],
+        });
+      }
+      // 나머지 8 placeholder cards — DSP 미구현, 항상 null 유지.
     },
     resize(): void {
       filteredChart.chart.resize();
+      sqiChart.chart.resize();
+      bpmTrendChart.chart.resize();
     },
     dispose(): void {
       filteredChart.dispose();
+      sqiChart.dispose();
+      bpmTrendChart.dispose();
       root.remove();
     },
   };

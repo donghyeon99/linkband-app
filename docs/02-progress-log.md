@@ -49,6 +49,60 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 (밤) — PPG DSP 5/5: ppg-view DSP 와이어링 [PROGRESS]
+
+**무엇을**: `src/ui/ppg-view.ts` 전체 rewrite — filter cascade + SQI + peak detection + HRV/HR 메트릭 + BPM trend 차트 통합. 4-row 레이아웃.
+
+**구조**:
+1. Hero card
+2. 2-col Row: **Filtered chart** (filtered IR/Red 라인) | **SQI chart** (실 PPG SQI)
+3. Full-width: **💓 BPM Trend** (실 차트, ~60s 윈도우, smooth, y 40-160 BPM)
+4. Full-width: **💓 HRV Metrics** — 17 cards (9 active + 8 placeholder)
+
+**Active 9 cards** (RR-based, 매 batch 갱신):
+- Heart Rate (BPM), HR Max, HR Min, AVNN, SDNN, RMSSD, SDSD, pNN50, pNN20
+
+**Placeholder 8 cards** (이번 범위 밖):
+- SpO₂, LF Power, HF Power, LF/HF Ratio, Stress Index, Stability, Intensity, Total Power
+
+**Peak detection 흐름**:
+1. raw IR 샘플 → `processPpgSample` (HP 0.5Hz → LP 5Hz cascade) → filtered IR buffer (size 400, 8s)
+2. 매 batch 마다 `detectPpgPeaks(irBuf, fs)` → peak 인덱스 배열
+3. `peaksToRrSeconds(peaks, fs)` → RR seconds → ×1000 → RR ms
+4. `computeHeartRate(rrMs)` + `computeHrvMetrics(rrMs)` → 9 metric cards 갱신
+5. BPM 값을 `bpmHistoryBuf` 에 push (cap 100), BPM trend 차트 갱신
+
+**Filter chart 갱신**: filtered IR/Red 가 buffer 에 누적 → multi-line 차트. y 범위 ±250 (sensor-dashboard PPGFilteredChart 와 동일).
+
+**SQI 차트**: `calculatePpgSqi(irBuf)` 매 batch → 마지막 batch 길이만큼 SQI buffer 에 append → area chart (y 0-100 %).
+
+**BPM trend 차트**: 1 entry per batch (~0.56s 간격). x-axis 시간 윈도우 -60s..0. smooth 라인 (sensor-dashboard `PPGBpmTrendChart` 와 동일 설정).
+
+**LeadOff banner**: DOM only (parser 가 PPG 별도 lead-off 정보 없음 — Q8). `display: none` 유지.
+
+**가드레일**:
+- 새 폴더 0, 새 dependency 0
+- chart.ts / parser.ts / models.ts / main.ts / layout.ts / eeg-view.ts / acc-view.ts 수정 0
+- LF/HF/SpO2/Stress/Stability/Intensity 구현 0 (placeholder 유지)
+
+**검증**:
+- `tsc --noEmit` 통과
+- `npm run test:run` 53/53 GREEN (DSP test 영향 없음)
+- `npm run build` 통과 (JS 549.57 → 552.92 KB, +3 KB)
+- Vite dev probe: `/`, `/src/ui/ppg-view.ts` 200
+
+**기대 동작 (사용자 검증)**:
+- `npm run dev` → Replay 클릭 → PPG 탭:
+  - Filtered IR/Red 차트: ~3s transient 후 펄스 모양 (0.5-5Hz 통과)
+  - SQI 차트: 실 SQI % 곡선
+  - BPM trend: 시간 흐름 따라 BPM 변동 (실 PPG dump → ~70-80 BPM 정도)
+  - 9 active cards: 의미 있는 RR-base 값
+  - 8 placeholder cards: "—" 그대로
+
+**참조**: `src/ui/ppg-view.ts`, sensor-dashboard `components/ppg/*`.
+
+---
+
 ### 2026-05-02 (밤) — PPG DSP 4/5: HRV math 테스트 [PROGRESS]
 
 **무엇을**: `tests/dsp.test.ts` 에 HRV/HR 산식 테스트 8 cases.
