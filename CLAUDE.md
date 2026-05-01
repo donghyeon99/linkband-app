@@ -63,10 +63,42 @@ From spec §17 (Bundle 2): the six open questions Q1–Q6 are documented as
 **verification-only**, with strategies in place that don't depend on resolution.
 They get answered when a real device is first connected.
 
-## Reference material (not in repo)
+## Cross-references for data-processing implementation
 
-Original Kotlin SDK files were downloaded to `../sensor-dashboard/.tmp_kotlin/`
-during analysis (gitignored, kept for cross-checking parser logic).
+The spec in `docs/01-protocol-spec.md` is **a snapshot derived from these sources**.
+For any data-processing code (`parser.py`, `dsp.py`, `metrics.py`, packet handling
+in `ble.py`), consult the original sources directly — the spec is convenient but
+authority lives in the upstream code.
+
+### Authoritative upstream sources
+
+| # | Source | Role | Specific files to read |
+|---|---|---|---|
+| 1 | https://github.com/LooxidLabs/SDK-Android (`develop` branch) | **Primary** Kotlin reference. Cleanest, smallest. The whole spec is derived from these 7 files. | `src/main/java/com/looxidlabs/sdkandroid/SensorDataParser.kt` (parsing), `BleManager.kt` (UUIDs, GATT sequence), `SensorConfiguration.kt` (magic numbers), `SensorData.kt` (data model) |
+| 2 | https://github.com/LooxidLabs/link_band_sdk | **Cross-validation** Python reference (~80 files). Compare parsing edge cases against ours. | `python_core/app/core/device.py`, `python_core/app/core/signal_processing.py`, `python_core/device.py` |
+| 3 | https://github.com/donghyeon99/sensor-dashboard | **Predecessor repo** (mock-data based React dashboard). Has DSP filters, chart components, EEG/PPG metric implementations that may be reusable when we get to P1/P2. | `src/dsp/`, `src/components/eeg/`, `src/components/ppg/`, `src/lib/` |
+| 4 | `../sensor-dashboard/.tmp_kotlin/` (local sibling, gitignored) | Offline cache of source #1. Same content, no network required. | `BleManager.kt`, `SensorDataParser.kt`, `SensorConfiguration.kt`, `LinkBandSdk.kt` |
+
+### When to cross-reference (not optional)
+
+- **Writing `parser.py`**: read source #1 `SensorDataParser.kt` line-by-line. If your
+  Python diverges from Kotlin in any way (other than the documented Q1/Q2 strategy
+  and the §8 PPG sign-extension fix), justify the divergence in code comment + spec.
+- **Writing `ble.py`**: read source #1 `BleManager.kt` for the GATT sequence,
+  CCCD enable order, and EEG `start`/`stop` write payload. The spec §4–§5 is a
+  summary; the original has timing details (sleeps, retries) that matter.
+- **Writing `dsp.py` or `metrics.py`**: check source #3 `sensor-dashboard` first —
+  it likely already has band-pass filters, BPM detection, HRV. Reuse the algorithms
+  (port to Python) rather than redesigning.
+- **Resolving any ambiguity in spec**: source #1 is canonical. If source #1 and
+  source #2 disagree, document the discrepancy in spec §17 and pick the safer
+  interpretation with rationale.
+
+### How to access
+
+- Online (any session): `WebFetch` for the GitHub URLs; or `curl https://raw.githubusercontent.com/{repo}/{branch}/{path}`.
+- Offline: source #4 (`../sensor-dashboard/.tmp_kotlin/`) for the four core Kotlin
+  files. Source #3 also lives locally at `../sensor-dashboard/`.
 
 ## Conversation history
 
