@@ -59,8 +59,7 @@ export function createEegView(container: HTMLElement): EegViewHandle {
   section.appendChild(subtitle);
 
   // LeadOff banner — sensor-dashboard `LeadOffBanner.tsx` 의 시각 구조 미러링.
-  const banner = document.createElement("div");
-  banner.style.cssText = `
+  const bannerStyle = `
     display: none;
     background: ${chartColors.warnBg};
     border: 1px solid ${chartColors.warnBorder};
@@ -70,8 +69,19 @@ export function createEegView(container: HTMLElement): EegViewHandle {
     color: #fca5a5;
     font-size: 0.85rem;
   `;
+  const banner = document.createElement("div");
+  banner.style.cssText = bannerStyle;
   banner.textContent = "⚠ Electrode contact issue (lead-off detected) — signal quality may be degraded";
   section.appendChild(banner);
+
+  // Saturated banner — 모든 샘플이 |ch1Uv| > 300,000 μV (rail-pinned) 이면 표시.
+  // 헤드밴드를 머리에 안 쓰면 floating 전극 → ADC 가 reference voltage 로 saturated.
+  // LeadOff 와 별개 신호이므로 둘 다 동시 표시 가능.
+  const saturatedBanner = document.createElement("div");
+  saturatedBanner.style.cssText = bannerStyle;
+  saturatedBanner.textContent =
+    "⚠ Electrodes appear floating — saturated to reference voltage. Place band on head to see real EEG.";
+  section.appendChild(saturatedBanner);
 
   // Chart host
   const chartHost = document.createElement("div");
@@ -122,6 +132,12 @@ export function createEegView(container: HTMLElement): EegViewHandle {
       // LeadOff: 본 batch 안에 lead-off 샘플이 하나라도 있으면 banner 표시.
       const anyLeadOff = batch.leadOff.some((v) => v);
       banner.style.display = anyLeadOff ? "block" : "none";
+
+      // Saturated: 본 batch 의 모든 ch1 샘플이 ±300,000 μV 밖이면 floating 전극으로 판단.
+      // 실 신호는 일반적으로 ±200 μV 안 (filter 전 DC offset 포함해도 ±수 mV).
+      // 336,083 μV (= 0x7FFFFF * LSB) 가 saturation 임계점.
+      const saturated = batch.ch1Uv.every((v) => Math.abs(v) > 300_000);
+      saturatedBanner.style.display = saturated ? "block" : "none";
 
       // 좌표를 초 단위로 변환 — 가장 오래된 샘플 = -((N-1)/fs), 최신 = 0.
       // 신호가 우→좌로 흐르는 시각적 의미 부여.

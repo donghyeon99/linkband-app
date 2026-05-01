@@ -49,6 +49,33 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 (밤) — EEG saturated electrode 배너 [PROGRESS]
+
+**무엇을**: EEG dump 가 saturated (rail-pinned) 라 평평한 라인이 그려져 "이상해 보임" 이라는 사용자 피드백 처리. 별도 안내 배너 추가.
+
+**`src/ui/eeg-view.ts`** (LeadOff 배너 외에 saturated 배너 추가):
+- 새 div `saturatedBanner` — LeadOff 배너와 동일 톤·스타일 (`bannerStyle` 변수 추출).
+- 문구: "⚠ Electrodes appear floating — saturated to reference voltage. Place band on head to see real EEG."
+- 트리거: `batch.ch1Uv.every((v) => Math.abs(v) > 300_000)` — 본 batch 의 **모든** ch1 샘플이 ±300,000 μV 밖이면 표시.
+  - saturation 임계점은 ~336,083 μV (= 0x7FFFFF × ~0.040064 μV/LSB).
+  - 실 신호는 DSP 전 DC offset 포함해도 일반적으로 ±수 mV 이내 — 300_000 μV 보다 한 자릿수 작음. false positive 가능성 낮음.
+- LeadOff 와 별개 신호 — 둘 다 동시 표시 가능 (배너 2개 stack).
+
+**시나리오 검증** (코드 reasoning):
+- Replay (책상 위 EEG dump): ch1_uv = 8388607 × 0.040064 ≈ 336,083 μV 25개 → every() true → banner 표시 ✓
+- 라이브 헤드밴드 착용: ±수십 ~ 수백 μV → every() false → banner 숨김 ✓
+
+**가드레일**:
+- 새 폴더 0, 새 dependency 0, DSP 0
+- main.ts / parser.ts / models.ts / 기존 view 의 데이터 흐름·버퍼링 수정 0
+- view 옵션·DOM 만 변경 (배너 div 1개 추가, 옵션 1줄 토글)
+
+**검증**: `tsc --noEmit` 통과. `npm run test:run` 16/16 GREEN. `npm run build` 통과 (JS 534.19 → 534.46 KB).
+
+**참조**: `src/ui/eeg-view.ts`.
+
+---
+
 ### 2026-05-02 (밤) — x-axis 시간축 표시 + 좌표를 초 단위로 [PROGRESS]
 
 **무엇을**: 차트가 "시간에 따른 그래프 형식이 아니다" 라는 사용자 피드백 처리. x-axis 가 숨겨져 있어서 시간 흐름이 안 보였던 문제.
