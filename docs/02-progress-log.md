@@ -49,6 +49,74 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 — sdk.linkband.store 배포 코드 비교 [VERIFIED]
+
+**무엇을**: 배포 빌드 source map 분석 후 우리 DSP 와 6 항목 비교. 코드 수정 없음 — 보고만.
+
+**번들 / source map**:
+- 메인: `https://sdk.linkband.store/assets/index-u1f-s9Xp.js` (3.87 MB) + `.map` (15 MB)
+- chunks: `charts-CNtBapQM.js` / `ui-DB6I6AG1.js` / `vendor-B0VEr0tq.js` 모두 `.map` 동반
+- source map 정상 — 776 sources 복원. DSP 파일: `src/utils/EEGSignalProcessor.ts` (28 KB), `src/utils/PPGSignalProcessor.ts` (48 KB), `node_modules/biquadjs/dist/BiquadFilters.esm.js` (6 KB)
+- ⚠️ sensor-dashboard 로컬 레포(`src/lib/dsp/{biquad,eegPipeline,spectrum,ppgPipeline}.ts`) 와는 **다른 코드베이스**. 배포는 `looxidlabs/sdk.linkband.store` repo (별도)
+
+**비교 결과**:
+
+| # | 항목 | 우리 (`src/linkband/dsp.ts`) | 배포 (`sdk_PPGSignalProcessor.ts` etc.) | 판정 |
+|---|------|------|------|------|
+| 1 | **PPG filter** | HP 0.5Hz + LP 5Hz cascade (Butterworth Q=1/√2) | **bandpass 1.0-5.0Hz** (biquadjs `makeBandpassFilter`, linkband Q) | ⚠️ DIFF — HP cutoff 0.5 vs **1.0** |
+| 2 | **PPG peak detection** | global threshold (max × 0.6) + 0.4s 간격 + 3-sample peak (`> prev && >= next`) | **local adaptive threshold** (0.5s 윈도우, `localMean + (localMax-localMean)×0.6`) + 0.4s 간격 + **5-sample peak** (`> ±1, ±2`) | ⚠️ DIFF |
+| 3 | **PPG BPM 산출** | 단순 평균 (`60000 / mean(RR)`) | **가중평균** (최근일수록 높은 weight) + IQR outlier 제거 + 300-1500ms filter + 40-200 BPM 검증 + CV>0.5 시 10% 감소 보정 | ⚠️ DIFF |
+| 4 | **HRV RR 추출 source** | filtered IR | **RAW IR** (별도 `detectPeaksForHRV`). 명시적 주석: "LF(0.04-0.15Hz)/HF(0.15-0.4Hz) 가 1.0Hz HP 로 제거되지 않도록" | ⚠️ DIFF (LF/HF 구현 시 핵심) |
+| 5 | **EEG sample rate** | **500Hz** (BLE raw, 우리 spec §17 Q7 실측) | **250Hz** (서버에서 2:1 down-sample 후 frontend 도달 추정) | 🟢 CONTEXT-CORRECT — 각자 환경에 맞음 |
+| 6 | **EEG bands 범위** | delta 1-4, theta 4-8, alpha 8-13, beta 13-30, gamma 30-**45** | delta **0.5**-4, theta 4-8, alpha 8-13, beta 13-30, gamma 30-**50** | ⚠️ DIFF (양쪽 호환 가능 수준) |
+| 7 | **EEG filter form** | notch 60Hz Q=2 (linkband-Q) + HP 1Hz + LP 45Hz (둘 다 Butterworth Q) | biquadjs `makeNotchFilter(60, fs, 2)` + `makeBandpassFilter(1, 45, fs)` (둘 다 linkband-Q) | ⚠️ DIFF (HP+LP 분리 vs 단일 bandpass; Q 산식 다름) |
+| 8 | **EEG SQI** | 70% amp + 30% freq, threshold 150μV, window 0.5s | sensor-dashboard 의 70/30 + threshold 150μV + amp/freq 별도 함수. transient 250 샘플 skip | 🟢 거의 MATCH |
+| 9 | **PPG SQI** | 25-sample window, threshold 250, 100% scale | 동일 — 25-sample window, threshold **250**, 250-500 선형 감소 | 🟢 MATCH |
+| 10 | **EEG indices 산식** | 자체 dB-difference (focusIndex = β−α 등) | 별도 인덱스 계산 함수 존재 (`focusIndex`, `relaxationIndex`, ...) — 본 비교에선 산식까지 도달 못 함 (28KB 중 인덱스 계산부 미열람) | 🟡 UNKNOWN — 추가 비교 필요 |
+
+**핵심 발견**:
+
+1. **HRV 이중 데이터 흐름** (배포의 의도된 설계):
+   - 시각화용 filtered: bandpass 1-5Hz 적용된 IR/Red (펄스 모양 표시)
+   - HRV 계산용 RAW IR: 별도 peak 검출 (LF/HF 보존)
+   - 우리는 단일 흐름 (filtered 만) — LF/HF 구현 시 정확도 떨어짐 예상
+
+2. **PPG filter HP 0.5 vs 1.0**:
+   - 0.5Hz 이상 = 30 BPM 이상 통과
+   - 1.0Hz 이상 = 60 BPM 이상 통과 (서맥 환자에겐 손실)
+   - 우리 0.5 가 더 보수적이지만 노이즈 더 들어옴
+   - **데이터 결과 차이의 가장 큰 원인일 가능성**: HP cutoff 절반 → 저주파 baseline drift 가 우리 신호에 더 남음 → peak 검출 불안정 → BPM 변동 큼
+
+3. **Peak 검출 알고리즘**:
+   - 우리 global threshold = max × 0.6 → outlier 1개로 threshold 인플레이션 → 다른 peak 놓침
+   - 배포 local adaptive → baseline drift 에 robust
+   - **두 번째로 큰 BPM 정확도 차이 원인**
+
+4. **BPM 후처리**:
+   - 우리는 단순 평균만
+   - 배포는 IQR + 가중평균 + 검증 + smoothing
+   - **사용자가 "결과가 다르다" 라고 한 핵심 원인 — 우리 BPM 이 더 노이즈에 흔들림**
+
+**권장 정정** (우선순위 순, 다음 청크 후보):
+
+1. 🔴 **PPG peak detection 알고리즘 교체**: global → **local adaptive threshold** + 5-sample window
+2. 🔴 **PPG BPM 후처리 추가**: IQR outlier 제거 + 가중평균 + 40-200 BPM 검증
+3. 🟠 **PPG filter cutoff 정정**: HP 0.5 → 1.0 (또는 sensor-dashboard 로컬 vs 배포 의도 차이를 설계 결정으로 [DECISION] 기록)
+4. 🟠 **HRV RR source 분리**: filtered → **RAW IR 전용 peak** 검출 (LF/HF 구현 대비)
+5. 🟡 **EEG band 범위 정렬**: delta 1→0.5, gamma 45→50 (배포 호환)
+6. 🟡 **biquadjs 도입 검토 OR 우리 hand-rolled 와의 numerical 동등성 확인**: Butterworth Q vs linkband Q 차이는 미세하나 명시
+7. 🟢 **EEG SQI / PPG SQI**: 거의 일치, 변경 불필요
+8. 🟢 **EEG fs**: 우리 500 정확. 배포 250 은 서버 down-sample 추정 — 환경 차이로 둠
+
+**참조**:
+- 배포 번들: https://sdk.linkband.store/assets/index-u1f-s9Xp.js + `.map`
+- 추출된 sources: `C:/Users/cowgo/AppData/Local/Temp/sdk_{PPGSignalProcessor,EEGSignalProcessor,BiquadFilters.esm}.{ts,js}`
+- 우리 DSP: `src/linkband/dsp.ts`
+
+**가드레일 준수**: 코드/spec/test 수정 0. progress-log entry 만 추가. `npm run test:run` 53/53 그대로.
+
+---
+
 ### 2026-05-02 (밤) — PPG DSP 5/5: ppg-view DSP 와이어링 [PROGRESS]
 
 **무엇을**: `src/ui/ppg-view.ts` 전체 rewrite — filter cascade + SQI + peak detection + HRV/HR 메트릭 + BPM trend 차트 통합. 4-row 레이아웃.
