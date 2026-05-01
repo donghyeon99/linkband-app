@@ -41,6 +41,7 @@ recordings/
 *.parquet
 *.h5
 sensor_data_log/
+tests/fixtures/real/
 
 # Local secrets / config
 .env
