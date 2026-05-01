@@ -1,6 +1,7 @@
 """Spike: 30s raw BLE dump from Link Band — seeds parser fixtures.
 
-Output: tests/fixtures/real/{eeg,ppg,acc,battery}.txt; one line = `<usec_hex>\\t<packet_hex>`.
+Output: reference-py/tests/fixtures/real/{eeg,ppg,acc,battery}.txt; one line = `<usec_hex>\\t<packet_hex>`.
+Run from `reference-py/` cwd: `cd reference-py && uv run python -m linkband.spike_dump`.
 Spec §3 (UUIDs), §5.1 (start sequence). 일회성 스파이크 — 본체 ble.py 와 별개.
 """
 

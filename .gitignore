@@ -29,12 +29,12 @@ dist/
 .DS_Store
 *.swp
 
-# Web (TypeScript / Vite primary deliverable)
+# Web (TypeScript / Vite primary deliverable, at repo root)
 node_modules/
-web/dist/
-web/.vite/
-web/coverage/
-web/.turbo/
+dist/
+.vite/
+coverage/
+.turbo/
 *.tsbuildinfo
 .vercel/
 
@@ -48,7 +48,7 @@ recordings/
 *.parquet
 *.h5
 sensor_data_log/
-tests/fixtures/real*/
+reference-py/tests/fixtures/real*/
 
 # Local secrets / config
 .env

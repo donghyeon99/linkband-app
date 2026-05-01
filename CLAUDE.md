@@ -10,7 +10,7 @@ No backend server.
 End users are **students**. They access via a Vercel URL (Chromium-based browser
 required for Web Bluetooth). Implementation is by the repo owner (donghyeon99).
 
-**Python is preserved as reference implementation only** — see `linkband/` directory.
+**Python is preserved as reference implementation only** — see `reference-py/linkband/` directory.
 The Python parser produces validation outputs against which the TS parser is checked
 (byte-for-byte and value-for-value). Python code is no longer actively developed
 beyond reference parity.
@@ -47,20 +47,20 @@ HTTPS so production is fine.
 
 ## Immediate next step
 
-Scaffold **`web/`** — Vite + TypeScript (strict). First milestone: scan → connect →
-CCCD enable → EEG `start` write → display per-sensor packet counts. No parsing yet,
-no charts. This is the TS analogue of the Python `spike_dump.py` and validates the
-Web Bluetooth path before building higher layers.
+TS scaffold (Vite + TypeScript strict) is complete at repo root. First milestone
+implemented in `src/main.ts`: scan → connect → CCCD enable → EEG `start` write →
+display per-sensor packet counts. No parsing yet, no charts. TS analogue of the
+Python `reference-py/linkband/spike_dump.py`.
 
-After scaffold: `web/src/linkband/models.ts` (port from `linkband/models.py`),
-`web/src/linkband/parser.ts` (port from `linkband/parser.py`), `web/src/linkband/ble.ts`,
-then visualization.
+Next: `src/linkband/models.ts` (port from `reference-py/linkband/models.py`),
+`src/linkband/parser.ts` (port from `reference-py/linkband/parser.py`),
+`src/linkband/ble.ts`, then visualization.
 
 See progress-log for detailed P0 sequence.
 
 ## Working style preferences
 
-### TypeScript (primary, in `web/`)
+### TypeScript (primary, at repo root)
 
 - **Strict mode** TS (`tsconfig.json` with `"strict": true`).
 - Use `Uint8Array` / `DataView` for binary parsing. Mirror Python's `int.from_bytes`
@@ -73,7 +73,7 @@ See progress-log for detailed P0 sequence.
   `Int16Array` typed arrays — TS analogue of numpy ndarrays for performance.
 - Comments only for the **WHY** (24-bit sign extension, μV conversion, byte order).
 
-### Python (reference, in `linkband/`)
+### Python (reference, in `reference-py/linkband/`)
 
 - Frozen at commit `be16261` (parser 15/15 GREEN). Touch only when fixing
   reference-parity bugs that affect TS validation.
@@ -81,9 +81,11 @@ See progress-log for detailed P0 sequence.
 
 ### Cross-validation discipline
 
-- Same fixture hex bytes (`tests/fixtures/real*/`) feed both Python and TS parser
-  tests. Outputs (per-sample values, μV conversions, timestamps) must match
-  byte-for-byte / float-equality.
+- Same fixture hex bytes (`reference-py/tests/fixtures/real*/`) feed both Python
+  and TS parser tests. Outputs (per-sample values, μV conversions, timestamps)
+  must match byte-for-byte / float-equality. TS tests can either hardcode the
+  same hex constants (mirror Python approach) or read the dump files at test
+  time via relative path.
 - When a discrepancy emerges, Python's output is the reference UNLESS the divergence
   is documented in spec/progress-log (e.g., the §8 PPG sign-extension fix).
 
@@ -119,8 +121,8 @@ They get answered when a real device is first connected.
 ## Cross-references for data-processing implementation
 
 The spec in `docs/01-protocol-spec.md` is **a snapshot derived from these sources**.
-For any data-processing code (`parser.py`, `dsp.py`, `metrics.py`, packet handling
-in `ble.py`), consult the original sources directly — the spec is convenient but
+For any data-processing code (`parser.ts`, `dsp.ts`, `metrics.ts`, packet handling
+in `ble.ts`), consult the original sources directly — the spec is convenient but
 authority lives in the upstream code.
 
 ### Authoritative upstream sources
@@ -134,22 +136,22 @@ authority lives in the upstream code.
 
 ### When to cross-reference (not optional)
 
-- **Writing `parser.ts`**: cross-reference both `linkband/parser.py` (this repo,
+- **Writing `parser.ts`**: cross-reference both `reference-py/linkband/parser.py` (this repo,
   reference impl, GREEN) AND source #1 `SensorDataParser.kt`. The Python is the
   authoritative numerical reference. Any divergence from Python must produce
   identical numerical outputs on shared fixtures.
 - **Writing `ble.ts`**: read source #1 `BleManager.kt` for GATT sequence,
   CCCD enable order, EEG `start`/`stop` write payload. Web Bluetooth API differs
-  from Android `BluetoothGatt` — check `linkband/spike_dump.py` for the bleak
+  from Android `BluetoothGatt` — check `reference-py/linkband/spike_dump.py` for the bleak
   variant. spec §4–§5 is summary only.
 - **Writing DSP / metrics in TS**: source #3 `sensor-dashboard/src/lib/dsp/`
   is **TypeScript already** — port directly with minimal translation. This is a
   major win of the TS pivot: existing biquad/eegPipeline/ppgPipeline/spectrum
   code can be reused.
 - **Resolving any ambiguity in spec**: source #1 (Kotlin) is canonical for
-  protocol. Empirical findings in `tests/fixtures/real*/` override Kotlin where
-  they disagree (e.g., 500 Hz EEG, 16-bit LE ACC — Kotlin had bugs). Python
-  parser is canonical for numerical conversion (μV, timestamps).
+  protocol. Empirical findings in `reference-py/tests/fixtures/real*/` override
+  Kotlin where they disagree (e.g., 500 Hz EEG, 16-bit LE ACC — Kotlin had bugs).
+  Python parser is canonical for numerical conversion (μV, timestamps).
 
 ### How to access
 

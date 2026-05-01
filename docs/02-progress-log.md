@@ -49,6 +49,35 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-01 (저녁) — 레포 구조 재배치: TS at root, Python → reference-py/ [PROGRESS]
+
+**무엇을**: 사용자 검토 후 (A) 안 채택 — TS 가 primary 인데 root 가 Python 프로젝트로 보이는 비대칭 해소. 모든 Python 자산을 `reference-py/` 안으로 self-contained 격리, TS 자산은 root 로 승격.
+
+**구체적 이동** (git mv 로 history 보존):
+- `pyproject.toml`, `uv.lock` → `reference-py/`
+- `linkband/` (4 파일) → `reference-py/linkband/`
+- `tests/test_parser.py` → `reference-py/tests/test_parser.py`
+- `tests/fixtures/` (gitignored) → `reference-py/tests/fixtures/` (fs mv)
+- `web/index.html`, `package.json`, `package-lock.json`, `tsconfig.json`, `vite.config.ts` → root
+- `web/src/` → `src/`
+- `web/` 디렉터리 제거 (`node_modules/`, `dist/` 는 재생성 가능, 삭제)
+
+**텍스트 갱신**:
+- `.gitignore`: `web/dist/` → `dist/`, `web/.vite/` → `.vite/` 등 root level 화. `tests/fixtures/real*/` → `reference-py/tests/fixtures/real*/`.
+- `reference-py/linkband/spike_dump.py`: docstring 의 출력 경로 표기 — 새 cwd(`reference-py/`) 기준이라 `Path("tests/fixtures/real")` 코드 자체는 그대로 유효, 주석만 갱신.
+- `reference-py/tests/test_parser.py`: fixture comment 경로 갱신. 코드 로직 영향 없음 (fixture 는 hex 상수로 박혀 있음).
+- `CLAUDE.md`: 모든 `linkband/` 경로 → `reference-py/linkband/`, TS 경로는 `web/src/` → `src/`. "Working style" 섹션 헤더 갱신. cross-validation 섹션의 fixture 경로 갱신.
+- `README.md`: 전면 재작성 — TS primary 명시, 새 디렉터리 트리, Setup 섹션 `npm` 우선 + `cd reference-py && uv sync` 보조.
+- `docs/01-protocol-spec.md` §15 (패키지 구조), §16 (MVP 순서) 갱신 — 현 구조 반영, 완료된 항목(parser.py 등) ✅ 표시.
+
+**검증**: 코드 수정 없음 (경로 이동 + 텍스트 동기화만). git mv 결과 R(rename) 14개 + M(modify) 5개 + 신규 reference-py/tests/fixtures/ 디렉터리. spec/CLAUDE.md/README 모두 새 구조와 정합.
+
+**다음 단계**: 새 세션이 git pull 후 `src/linkband/models.ts` (P0 첫 항목) 작업 가능. `npm run dev` 는 root 에서 동작.
+
+**참조**: 본 entry 가 변경 자체. 영향받는 파일 다수 (위 목록 참조).
+
+---
+
 ### 2026-05-01 (저녁) — TS + Web Bluetooth 피벗 [DECISION]
 
 **무엇을**: 오후의 "Python 유지" 결정을 뒤집고 **TS + Web Bluetooth API + Vercel 정적 배포**

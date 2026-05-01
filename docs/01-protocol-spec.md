@@ -464,42 +464,60 @@ DSP·메트릭 단계에서 추가 메시지 (예시):
 
 ---
 
-## 15. 제안 패키지 구조
+## 15. 패키지 구조 (2026-05-01 TS 피벗 후 갱신)
+
+원래 Python 단일 프로젝트로 제안되었으나, TS+Vercel 피벗 결정 후 현재 구조는
+**TS 가 root, Python 은 reference-py/ 안의 self-contained 검증용 서브프로젝트**.
 
 ```
 linkband-app/
-├── pyproject.toml
-├── linkband/
-│   ├── __init__.py            # public API (LinkBand, SensorType, AccMode, ...)
-│   ├── models.py              # EegBatch, PpgBatch, AccBatch, BatteryStatus
-│   ├── ble.py                 # bleak 기반 BLE 매니저 (BleManager.kt 포팅)
-│   ├── parser.py              # 패킷 → batch (SensorDataParser.kt 포팅)
-│   ├── dsp.py                 # 필터, AccMode MOTION 처리
-│   ├── metrics.py             # BPM, HRV, 밴드파워
-│   └── server.py              # FastAPI + WebSocket
-├── notebooks/
-│   ├── 01_connect.ipynb
-│   ├── 02_explore_eeg.ipynb
-│   └── 03_compute_bpm.ipynb
-├── tests/
-│   ├── test_parser.py         # 합성 패킷으로 byte → batch 검증
-│   └── test_dsp.py
-└── web/                       # Vite + React (시각화 전용)
+├── docs/                          # 언어 무관 (spec, progress log)
+├── src/                           # TypeScript primary
+│   ├── main.ts                    # 첫 마일스톤 (스캔/연결/카운트)
+│   ├── uuids.ts
+│   └── linkband/                  # P0 추가 예정
+│       ├── models.ts              # EegBatch/PpgBatch/AccBatch (TS interface + typed arrays)
+│       ├── parser.ts              # 패킷 → batch (reference-py/linkband/parser.py 포팅)
+│       └── ble.ts                 # Web Bluetooth 기반 BLE 매니저
+├── tests/                         # vitest (TS), 추후
+├── package.json                   # Vite + TS strict
+├── tsconfig.json
+├── vite.config.ts
+├── index.html
+│
+└── reference-py/                  # Python 검증용 (frozen at be16261)
+    ├── pyproject.toml             # uv
+    ├── linkband/
+    │   ├── models.py              # dataclass + numpy ndarray
+    │   ├── parser.py              # 15/15 GREEN
+    │   └── spike_dump.py          # 30s BLE 덤프
+    └── tests/
+        ├── test_parser.py
+        └── fixtures/real*/        # gitignored
 ```
+
+**역할 분담**:
+- `src/`: 학생 배포용 단일 SPA. Vite 빌드 결과물이 Vercel 에 올라감.
+- `reference-py/`: TS 포팅의 numerical 정답지. parser.ts 가 같은 입력에 같은 출력을 내는지 검증.
+- `docs/`: 양쪽 모두 동일하게 참조하는 언어-무관 자산.
 
 ---
 
-## 16. 구현 우선순위 (MVP 순서)
+## 16. 구현 우선순위 (MVP 순서) — 2026-05-01 TS 피벗 후 갱신
 
-| 우선순위 | 모듈 | 내용 |
+| 우선순위 | 모듈 | 상태 / 내용 |
 |---|---|---|
-| P0 | `models.py` | dataclass 정의, 단위 테스트 없이도 가능 |
-| P0 | `parser.py` | 합성 패킷으로 단위 테스트 가능 (실 디바이스 불필요) |
-| P0 | `ble.py` | 실 디바이스 필요. 스캔 → 연결 → 시작 → 패킷 수신까지 |
-| P1 | `server.py` | WebSocket 단방향 송신 (가장 단순한 형태부터) |
-| P1 | `web/` | Vite + React 시각화 (현재 sensor-dashboard에서 차트 발췌 이식) |
-| P2 | `dsp.py` | band-pass, notch, AccMode MOTION |
-| P2 | `metrics.py` | BPM, HRV, 밴드파워 |
+| ✅ done | `reference-py/linkband/models.py` | dataclass 정의, frozen reference |
+| ✅ done | `reference-py/linkband/parser.py` | 15/15 tests GREEN, frozen reference |
+| ✅ done | `reference-py/linkband/spike_dump.py` | 30s BLE 덤프, fixture 생성기 |
+| ✅ done | `src/main.ts` | 첫 마일스톤 — 스캔/연결/패킷 카운트 |
+| P0 | `src/linkband/models.ts` | EegBatch/PpgBatch/AccBatch interface + Float64Array/Int32Array/Int16Array |
+| P0 | `src/linkband/parser.ts` | 패킷 → batch 변환. parser.py 의 numerical reference 통과 필수 |
+| P0 | `src/linkband/ble.ts` | main.ts 의 BLE 흐름을 클래스화 + 자동 재연결 + Q8 PPG stop-early 처리 |
+| P1 | `src/components/` (React 도입) | 차트, 메트릭 카드 |
+| P2 | `src/linkband/dsp.ts` | band-pass, notch, AccMode MOTION (sensor-dashboard `src/lib/dsp/` TS 에서 직접 포팅) |
+| P2 | `src/linkband/metrics.ts` | BPM, HRV, 밴드파워 |
+| P3 | Vercel 배포 | URL 한 번 클릭으로 학생 사용 |
 | P3 | 자동 재연결, 배치 모드 다양화, 노트북 |
 
 **P0 단계에서 실 디바이스 없이 검증 가능한 것**:

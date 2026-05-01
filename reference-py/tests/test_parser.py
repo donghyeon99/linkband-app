@@ -82,7 +82,7 @@ EEG_LSB_UV = 1.0 * 4.033 / 12.0 / 8388607.0 * 1e6
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Real-device fixtures (from tests/fixtures/real/*.txt line 1, 2026-05-01 spike)
+# Real-device fixtures (from reference-py/tests/fixtures/real*/*.txt line 1, 2026-05-01 spike)
 # 같은 헤드밴드(LXB-0263003F)의 첫 패킷 raw bytes. Q1/Q6/Q7 검증의 근거.
 # ─────────────────────────────────────────────────────────────────────────────
 
