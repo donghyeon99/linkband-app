@@ -49,6 +49,30 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 — ui/metric-card.ts (PPG metrics 패널용 단일 카드 위젯) [PROGRESS]
+
+**무엇을**: sensor-dashboard `components/ui/MetricCard.tsx` + `ppg/PPGMetricsCards.tsx` 의 카드 시각 구조를 vanilla TS DOM 으로 단순화 포팅. PPG metrics 패널에서 12-15개 인스턴스 사용 예정.
+
+**의도된 단순화**:
+- 임계값 분류 (sensor-dashboard 의 `IndexThreshold`/`classifyIndex`/`getThresholdTextClass`) **제거** — DSP/metrics 가 아직 없으므로 status 라벨은 placeholder ("No data" / "live") 만.
+- Tailwind 클래스 대신 inline style. theme.ts 의 `uiColors` 토큰 사용.
+- `IndexTooltip` (lucide-react Clock 아이콘 등) 생략 — 차후 metric 단계에서 검토.
+
+**API**:
+```ts
+createMetricCard(container, { label: "BPM", unit: "bpm", dotColor: "#ef4444" })
+  → { element, update(value: number | null) }
+```
+`update(null)` 로 "—" placeholder, `update(72)` 로 숫자 표시 + status "live".
+
+**검증**: `tsc --noEmit` 통과. `npm run build` JS 7.43KB 그대로 (아직 main.ts 가 import 안 함, tree-shake — 의도).
+
+**다음 단계**: ui/eeg-view.ts (Visualizer + LeadOff banner + ch1/ch2 라인 차트).
+
+**참조**: `src/ui/metric-card.ts`, sensor-dashboard `components/ui/MetricCard.tsx`.
+
+---
+
 ### 2026-05-02 — echarts + ui/theme + ui/chart 도입 [PROGRESS]
 
 **무엇을**: sensor-dashboard frontend 미러링의 첫 커밋. 차트 라이브러리 echarts 도입 + 공통 스타일/래퍼 만들기.
