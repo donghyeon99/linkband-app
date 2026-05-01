@@ -49,6 +49,21 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-01 (저녁) — vitest dev infrastructure [PROGRESS]
+
+**무엇을**: TS 영역에 단위 테스트 셋업. parser 13 케이스 포팅을 위한 사전 작업.
+
+- `npm i -D vitest` (4.1.5).
+- `package.json` scripts: `"test": "vitest"`, `"test:run": "vitest run"`.
+- `vite.config.ts` 에 `/// <reference types="vitest" />` + `test: { environment: "node" }` 추가. parser 가 순수 byte 변환이라 jsdom 불필요.
+- `tests/sanity.test.ts` placeholder 1 케이스 (1+1=2) — health check.
+
+**검증**: `npm run test:run` → 1/1 passed (208ms). `tsc --noEmit` 통과.
+
+**참조**: `package.json`, `vite.config.ts`, `tests/sanity.test.ts`.
+
+---
+
 ### 2026-05-01 (저녁) — src/linkband/models.ts 작성, P0 첫 TS 항목 [PROGRESS]
 
 **무엇을**: 새 구조의 P0 첫 항목인 `src/linkband/models.ts` (91줄) 작성. Python reference (`reference-py/linkband/models.py`) 의 dataclass 4개 (`EegBatch` / `PpgBatch` / `AccBatch` / `BatteryStatus`) 를 TS interface + typed array 조합으로 미러링.
