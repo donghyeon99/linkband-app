@@ -363,3 +363,115 @@ export function computeEegPower(
   }
   return { bands, totalPowerLinear: totalLinear };
 }
+
+// ─── EEG Signal Quality Index (sensor-dashboard `eegPipeline.ts` 미러) ────
+// 윈도우만 fs 비례로 스케일 (125 → 250). amplitude threshold (150 μV) 는
+// EEG 진폭 절대값이라 fs 무관 — 그대로.
+
+const EEG_SQI_WINDOW = EEG_FS / 2; // 0.5초 윈도우 (sensor-dashboard 125 = 0.5s @ 250Hz)
+const EEG_AMP_THRESHOLD = 150; // μV
+
+/**
+ * Amplitude-기반 EEG SQI — sdk.linkband 로직 그대로.
+ *
+ * Combined SQI = 70% amplitude + 30% frequency (variance-based).
+ * - 윈도우당 local DC 제거 (linkband mean subtraction 매칭).
+ * - amplitude SQI: |x − mean| ≤ 150 μV 면 1, 초과분 비례 감점.
+ * - frequency SQI: variance / 150² 가 작을수록 1, 클수록 0.
+ *
+ * 입력은 filtered EEG (notch+HP+LP cascade 통과). raw 에 직접 호출 시 saturated
+ * (~336,083 μV) 에서 amp threshold 가 의미 없어짐 — filtered 신호 기준 동작.
+ */
+export function calculateEegSqi(filteredData: number[]): number[] {
+  const len = filteredData.length;
+  const ampSqi = new Array<number>(len).fill(0);
+  const freqSqi = new Array<number>(len).fill(0);
+
+  for (let i = 0; i <= len - EEG_SQI_WINDOW; i++) {
+    let mean = 0;
+    for (let j = i; j < i + EEG_SQI_WINDOW; j++) mean += filteredData[j];
+    mean /= EEG_SQI_WINDOW;
+
+    let ampSum = 0;
+    for (let j = i; j < i + EEG_SQI_WINDOW; j++) {
+      const amp = Math.abs(filteredData[j] - mean);
+      if (amp <= EEG_AMP_THRESHOLD) {
+        ampSum += 1;
+      } else {
+        const excess = Math.min((amp - EEG_AMP_THRESHOLD) / EEG_AMP_THRESHOLD, 1);
+        ampSum += Math.max(0, 1 - excess);
+      }
+    }
+    const ampAvg = ampSum / EEG_SQI_WINDOW;
+
+    let varSum = 0;
+    for (let j = i; j < i + EEG_SQI_WINDOW; j++) varSum += (filteredData[j] - mean) ** 2;
+    const variance = varSum / EEG_SQI_WINDOW;
+    const freqScore = Math.max(
+      0,
+      Math.min(1, 1 - variance / (EEG_AMP_THRESHOLD * EEG_AMP_THRESHOLD)),
+    );
+
+    for (let j = i; j < i + EEG_SQI_WINDOW && j < len; j++) {
+      ampSqi[j] = ampAvg;
+      freqSqi[j] = freqScore;
+    }
+  }
+
+  return ampSqi.map((a, i) => (0.7 * a + 0.3 * freqSqi[i]) * 100);
+}
+
+// ─── EEG Analysis Indices (own derivation — see note) ─────────────────────
+//
+// **Note (spec §17 추가 검증 필요)**: sensor-dashboard 는 indices 를 외부 linkband
+// SDK 결과로 직접 받아 store 에 저장 (`eegAdapter.ts` `normalizeEegAnalysis`).
+// TS 측에 자체 산식 없음. 우리는 spectrum 의 band power 결과로부터 EEG literature
+// 의 표준 비율식으로 derivation. sensor-dashboard 의 numerical 값과 차이 가능 —
+// 실 디바이스 비교 검증 필요 (사용자 향후 결정).
+
+export interface EegIndices {
+  /** Sum of all band linear powers, averaged over channels. */
+  totalPower: number;
+  /** β / α (focused 상태). dB difference. */
+  focusIndex: number;
+  /** α / β (relaxed 상태). dB difference. */
+  relaxationIndex: number;
+  /** (β+γ) − (α+θ) (스트레스 지표). dB. */
+  stressIndex: number;
+  /** θ / α (인지 부하). dB difference. */
+  cognitiveLoad: number;
+  /** ch2_α − ch1_α (좌/우 비대칭). dB difference. */
+  hemisphericBalance: number;
+  /** −|stressIndex| 의 normalize (덜 스트레스 = 더 안정). dB. */
+  emotionalStability: number;
+}
+
+/** Band power → 7 EEG analysis indices. spectrum 결과를 spectrum-based 비율로 변환. */
+export function computeEegIndices(power: ComputedEegPower): EegIndices {
+  const b = power.bands;
+  const ch1Avg = (key: BandRange["key"]) => b[key].ch1Db;
+  const ch2Avg = (key: BandRange["key"]) => b[key].ch2Db;
+  const avg = (key: BandRange["key"]) => (ch1Avg(key) + ch2Avg(key)) / 2;
+
+  const alpha = avg("alpha");
+  const beta = avg("beta");
+  const theta = avg("theta");
+  const gamma = avg("gamma");
+
+  const focusIndex = beta - alpha;
+  const relaxationIndex = alpha - beta;
+  const stressIndex = (beta + gamma) / 2 - (alpha + theta) / 2;
+  const cognitiveLoad = theta - alpha;
+  const hemisphericBalance = ch2Avg("alpha") - ch1Avg("alpha");
+  const emotionalStability = -Math.abs(stressIndex);
+
+  return {
+    totalPower: power.totalPowerLinear,
+    focusIndex,
+    relaxationIndex,
+    stressIndex,
+    cognitiveLoad,
+    hemisphericBalance,
+    emotionalStability,
+  };
+}

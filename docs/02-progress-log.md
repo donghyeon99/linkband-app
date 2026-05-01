@@ -49,6 +49,35 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 (밤) — DSP 3/4: SQI + EEG indices [PROGRESS]
+
+**무엇을**: `src/linkband/dsp.ts` 에 SQI + 7 EEG analysis indices 추가.
+
+**SQI 포팅** (sensor-dashboard `eegPipeline.ts` `calculateEegSqi`):
+- `EEG_SQI_WINDOW = EEG_FS / 2` = 250 (sensor-dashboard 125 = 0.5s @ 250Hz, fs 비례 스케일)
+- `EEG_AMP_THRESHOLD = 150` μV (절대 진폭, fs 무관 — 그대로)
+- 알고리즘 sensor-dashboard 와 1:1: 윈도우당 local DC 제거 → 70% amplitude SQI + 30% frequency SQI (variance-based) → 100% scaled.
+
+**EEG Indices** ([ISSUE] sensor-dashboard 내부 derivation 부재):
+- sensor-dashboard 는 indices 를 외부 linkband SDK 결과로 받아 store 에 저장 (`eegAdapter.ts:155-164` `normalizeEegAnalysis`). TS 측에 자체 산식 없음.
+- 우리는 spectrum 의 band power 결과로부터 **EEG literature 표준 비율식**으로 own derivation. sensor-dashboard 의 numerical 값과 차이 가능 — 실 디바이스 비교 검증은 spec §17 추가 검증 항목.
+- 7 indices: `totalPower`, `focusIndex` = β−α, `relaxationIndex` = α−β, `stressIndex` = (β+γ)/2 − (α+θ)/2, `cognitiveLoad` = θ−α, `hemisphericBalance` = ch2_α − ch1_α, `emotionalStability` = −|stressIndex|. 모두 dB difference (band power 가 sensor-dashboard 처럼 dB 형식이라).
+
+**테스트** (`tests/dsp.test.ts` +5, 총 21 cases / 37 total):
+- SQI clean (50μV) → >70%, noisy (500μV) → <30%, output 길이 = 입력 길이
+- Indices: alpha-rich (10Hz) 입력 → relaxationIndex > focusIndex, 둘이 negation 관계
+- 모든 7 필드 NaN 없음
+
+**가드레일**: 새 폴더 0, 새 dependency 0. parser/models/main/layout/views 수정 0.
+
+**검증**: `tsc --noEmit` 통과. `npm run test:run` 37/37 GREEN.
+
+**다음**: eeg-view 와 wiring — step 4 (마지막).
+
+**참조**: `src/linkband/dsp.ts`, sensor-dashboard `eegPipeline.ts` (SQI), `eegAdapter.ts:155-164` (indices not available, our own derivation).
+
+---
+
 ### 2026-05-02 (밤) — DSP 2/4: spectrum + band power [PROGRESS]
 
 **무엇을**: `src/linkband/dsp.ts` 에 sensor-dashboard `spectrum.ts` 의 spectrum + band power 부분 추가. 외부 FFT 라이브러리 없음 (자체 DFT + Morlet wavelet).

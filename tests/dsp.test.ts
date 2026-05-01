@@ -12,7 +12,10 @@ import {
   EEG_BANDS,
   EEG_SAMPLE_RATE,
   EEG_TRANSIENT_SAMPLES,
+  calculateEegSqi,
   computeBandPower,
+  computeEegIndices,
+  computeEegPower,
   computeSpectrum,
   createBiquadState,
   createEegChannelFilter,
@@ -130,6 +133,65 @@ describe("computeBandPower (Morlet on linkband-style filter)", () => {
   it("입력 < BAND_POWER_MIN_RAW 면 zero 반환", () => {
     const tiny = generateSine(10, 100, 50);
     expect(computeBandPower(tiny, FS, 8, 13)).toEqual({ linear: 0, db: 0 });
+  });
+});
+
+describe("calculateEegSqi", () => {
+  it("작은 진폭 (≤150 μV) clean signal 에 대해 high SQI (>70)", () => {
+    // 50μV sine — 임계값 150μV 안. ampAvg 1.0, freqScore 도 high → SQI ~100.
+    const clean = generateSine(10, 1500, 50);
+    const sqi = calculateEegSqi(clean);
+    // 윈도우 settle 후 평균 SQI
+    const tail = sqi.slice(EEG_SAMPLE_RATE);
+    const avg = tail.reduce((a, b) => a + b, 0) / tail.length;
+    expect(avg).toBeGreaterThan(70);
+  });
+
+  it("큰 진폭 (≥500 μV >> 150 threshold) 에 대해 low SQI (<30)", () => {
+    const noisy = generateSine(10, 1500, 500);
+    const sqi = calculateEegSqi(noisy);
+    const tail = sqi.slice(EEG_SAMPLE_RATE);
+    const avg = tail.reduce((a, b) => a + b, 0) / tail.length;
+    expect(avg).toBeLessThan(30);
+  });
+
+  it("출력 길이 = 입력 길이", () => {
+    const data = generateSine(10, 800, 50);
+    expect(calculateEegSqi(data).length).toBe(800);
+  });
+});
+
+describe("computeEegIndices (own derivation)", () => {
+  it("10Hz alpha-rich 입력 → relaxationIndex > focusIndex (alpha > beta)", () => {
+    const ch1 = generateSine(10, 1500, 50);
+    const ch2 = generateSine(10, 1500, 50);
+    const power = computeEegPower(ch1, ch2, FS);
+    expect(power).not.toBeNull();
+    const idx = computeEegIndices(power!);
+    expect(Number.isFinite(idx.focusIndex)).toBe(true);
+    expect(Number.isFinite(idx.relaxationIndex)).toBe(true);
+    // 10Hz = alpha → relaxationIndex (α-β) 가 focusIndex (β-α) 보다 큼
+    expect(idx.relaxationIndex).toBeGreaterThan(idx.focusIndex);
+    // 둘은 서로 negation 관계
+    expect(Math.abs(idx.relaxationIndex + idx.focusIndex)).toBeLessThan(1e-6);
+  });
+
+  it("모든 7 indices 필드 finite (NaN 없음)", () => {
+    const ch1 = generateSine(15, 1500, 30);
+    const ch2 = generateSine(15, 1500, 30);
+    const power = computeEegPower(ch1, ch2, FS)!;
+    const idx = computeEegIndices(power);
+    for (const key of [
+      "totalPower",
+      "focusIndex",
+      "relaxationIndex",
+      "stressIndex",
+      "cognitiveLoad",
+      "hemisphericBalance",
+      "emotionalStability",
+    ] as const) {
+      expect(Number.isFinite(idx[key])).toBe(true);
+    }
   });
 });
 
