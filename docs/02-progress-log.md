@@ -49,6 +49,42 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 (밤) — view resize() 노출, hidden-tab init 복구 [PROGRESS]
+
+**버그**: PPG Filtered chart, ACC Waveform / Magnitude 가 작게 표시됨. 원인 — `createPpgView` / `createAccView` 호출 시점에 컨테이너가 `display: none` (비활성 탭). ECharts.init 이 0×0 으로 measure → tiny 차트로 init. 탭 전환으로 컨테이너 가시화돼도 ECharts 인스턴스는 자동 resize 안 됨.
+
+**참고**: sensor-dashboard `BaseChart.tsx` 도 ResizeObserver 미사용 — `window.addEventListener('resize', ...)` 만. React 의 mount/unmount 가 visibility 변화를 흡수해서 우리 같은 vanilla 토글 케이스가 발생 안 함.
+
+**Fix**:
+
+(a) **3 view handle 에 `resize()` 메서드 추가**:
+- `EegViewHandle.resize()` → chart1.chart.resize() + chart2.chart.resize()
+- `PpgViewHandle.resize()` → filteredChart.chart.resize()
+- `AccViewHandle.resize()` → waveChart.chart.resize() + magChart.chart.resize()
+
+(b) **`src/main.ts` `activateTab(id)` 안에서 활성 view 의 resize 호출**:
+```ts
+const views: Record<TabId, { resize: () => void }> = { eeg, ppg, acc };
+function activateTab(id) {
+  // ... display 토글 ...
+  views[id].resize();  // 새 사이즈로 다시 measure
+}
+```
+- 추가로 view 인스턴스 생성 순서를 `activateTab("eeg")` 호출보다 **앞**으로 이동 — `views` map 이 activateTab 시점에 정의돼 있도록.
+
+**가드레일 준수**:
+- 새 폴더 0, 새 dependency 0, DSP 0
+- chart.ts / parser.ts / models.ts / layout.ts 수정 0
+- view 3개 + main.ts 만 (사용자 spec 그대로)
+
+**검증**: `tsc --noEmit` 통과. `npm run test:run` 16/16 GREEN. `npm run build` 통과 (JS 541.90 → 542.05 KB).
+
+**Note (다음 청크 후보)**: `chart.ts` 의 `createChart` 에 `ResizeObserver` 통합하면 view 의 명시 `resize()` 호출 + main.ts wiring 둘 다 제거 가능. 컨테이너 size 변화를 자동 감지. 본 fix 범위 밖.
+
+**참조**: `src/ui/eeg-view.ts`, `src/ui/ppg-view.ts`, `src/ui/acc-view.ts`, `src/main.ts`.
+
+---
+
 ### 2026-05-02 (밤) — xAxis 고정 윈도우 (3 views) [PROGRESS]
 
 **무엇을**: 차트의 xAxis 를 매 batch 마다 동적으로 갱신하지 말고 sensor 별 고정 윈도우로 잠금. 라인은 buffer 차오르며 우→좌 자라남, 빈 영역은 그대로 빈 차트.

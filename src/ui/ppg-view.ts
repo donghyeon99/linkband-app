@@ -25,6 +25,10 @@ const STYLE_ID = "ppg-view-style";
 
 export interface PpgViewHandle {
   onBatch(batch: PpgBatch): void;
+  /** 컨테이너 가시화 직후 호출 — hidden tab init 케이스에서 ECharts 가 0×0 으로
+   *  measure 된 걸 정상 사이즈로 다시 잡아준다. placeholder div 들은 chart 가
+   *  아니라 resize 불필요. */
+  resize(): void;
   dispose(): void;
 }
 
@@ -274,6 +278,9 @@ export function createPpgView(container: HTMLElement): PpgViewHandle {
         xAxis: { min: -PPG_WINDOW_SEC, max: 0 },
         series: [{ data: irData }, { data: redData }],
       });
+    },
+    resize(): void {
+      filteredChart.chart.resize();
     },
     dispose(): void {
       filteredChart.dispose();

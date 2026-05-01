@@ -28,6 +28,9 @@ const ACC_WINDOW_SEC = ACC_BUFFER_SIZE / ACC_FS; // = 8 — xAxis 고정 윈도�
 
 export interface AccViewHandle {
   onBatch(batch: AccBatch): void;
+  /** 컨테이너 가시화 직후 호출 — hidden tab init 케이스에서 ECharts 가 0×0 으로
+   *  measure 된 걸 정상 사이즈로 다시 잡아준다. */
+  resize(): void;
   dispose(): void;
 }
 
@@ -258,6 +261,10 @@ export function createAccView(container: HTMLElement): AccViewHandle {
         xAxis: { min: -ACC_WINDOW_SEC, max: 0 },
         series: [{ data: magData }],
       });
+    },
+    resize(): void {
+      waveChart.chart.resize();
+      magChart.chart.resize();
     },
     dispose(): void {
       waveChart.dispose();

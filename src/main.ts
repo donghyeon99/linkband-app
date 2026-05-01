@@ -88,10 +88,29 @@ const containers: Record<TabId, HTMLElement> = {
   acc: accContainer,
 };
 
+// Views — single instance per sensor, never disposed (page lifetime).
+// 비활성 탭의 view 도 background 에서 데이터를 받아 buffer 를 채워둔다 → 탭 전환 시
+// 즉시 그래프가 그려져 있음 (sensor-dashboard 와 동일 동작).
+//
+// Activation 전 (모든 컨테이너 visible) 에 createXxxView 호출해야 ECharts 가 0×0
+// 으로 init 안 됨. 첫 activateTab 호출 시 컨테이너 hide → 다음 activate 때 resize().
+const eegView = createEegView(eegContainer);
+const ppgView = createPpgView(ppgContainer);
+const accView = createAccView(accContainer);
+
+const views: Record<TabId, { resize: () => void }> = {
+  eeg: eegView,
+  ppg: ppgView,
+  acc: accView,
+};
+
 function activateTab(id: TabId): void {
   for (const [k, el] of Object.entries(containers) as Array<[TabId, HTMLElement]>) {
     el.style.display = k === id ? "" : "none";
   }
+  // 활성화 직후 ECharts 가 새 컨테이너 size 로 다시 measure — 비활성 탭 시점에
+  // 0×0 으로 init 된 케이스 복구.
+  views[id].resize();
 }
 
 createTabs(
@@ -106,13 +125,6 @@ createTabs(
   },
 );
 activateTab("eeg"); // 디폴트.
-
-// Views — single instance per sensor, never disposed (page lifetime).
-// 비활성 탭의 view 도 background 에서 데이터를 받아 buffer 를 채워둔다 → 탭 전환 시
-// 즉시 그래프가 그려져 있음 (sensor-dashboard 와 동일 동작).
-const eegView = createEegView(eegContainer);
-const ppgView = createPpgView(ppgContainer);
-const accView = createAccView(accContainer);
 
 // ─── Status helpers ────────────────────────────────────────────────────────
 

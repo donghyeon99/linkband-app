@@ -27,6 +27,9 @@ const STYLE_ID = "eeg-view-style";
 
 export interface EegViewHandle {
   onBatch(batch: EegBatch): void;
+  /** 컨테이너 가시화 직후 호출 — 탭 전환 등으로 0×0 → 정상 size 변할 때 ECharts 가
+   *  새 사이즈로 다시 measure 하도록 강제. */
+  resize(): void;
   dispose(): void;
 }
 
@@ -295,6 +298,10 @@ export function createEegView(container: HTMLElement): EegViewHandle {
         xAxis: { min: -EEG_WINDOW_SEC, max: 0 },
         series: [{ data: ch2Data }],
       });
+    },
+    resize(): void {
+      chart1.chart.resize();
+      chart2.chart.resize();
     },
     dispose(): void {
       chart1.dispose();
