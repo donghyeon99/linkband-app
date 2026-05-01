@@ -49,6 +49,45 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 (밤) — xAxis 고정 윈도우 (3 views) [PROGRESS]
+
+**무엇을**: 차트의 xAxis 를 매 batch 마다 동적으로 갱신하지 말고 sensor 별 고정 윈도우로 잠금. 라인은 buffer 차오르며 우→좌 자라남, 빈 영역은 그대로 빈 차트.
+
+**상태 점검 결과**:
+- 사용자 prompt 가 "직전 zero/NaN-prefill commit" revert 도 함께 요구했지만, 본 레포의 view 들은 이미 빈 array (`const buf: number[] = []`) 로 init 되어 있음 — prefill 시도가 들어간 적 없음. 따라서 (a) revert 는 no-op.
+- (b) xAxis 고정만 실제 작업.
+
+**3 view 변경**:
+- `eeg-view.ts`: `EEG_WINDOW_SEC = EEG_BUFFER_SIZE / EEG_FS` (= 4초). chart1/chart2 둘 다 `xAxis: { min: -EEG_WINDOW_SEC, max: 0 }` 로.
+- `ppg-view.ts`: `PPG_WINDOW_SEC = PPG_BUFFER_SIZE / PPG_FS` (= 8초). filteredChart 동일.
+- `acc-view.ts`: `ACC_WINDOW_SEC = ACC_BUFFER_SIZE / ACC_FS` (= 8초). waveChart + magChart 둘 다 동일 윈도우.
+
+**좌표 매핑 (그대로 유지)**:
+- `buf.map((v, i) => [(i - last) / fs, v])` — newest = t=0, oldest = -(currentLen-1)/fs.
+- buffer 차오를수록 라인 좌측으로 grow. xAxis 는 항상 [-WINDOW_SEC, 0] 라 라인 외 영역은 빈 차트.
+- `fs` 는 onBatch 안에서 `batch.fs` 그대로. 모듈 레벨 `*_WINDOW_SEC` 는 models 의 `EEG_FS / PPG_FS / ACC_FS` literal 로 계산.
+
+**가드레일**:
+- 새 폴더 0, 새 dependency 0, DSP 0
+- chart.ts / parser.ts / models.ts / main.ts / layout.ts 수정 0
+- view 3개의 buffer init + xAxis 만 (사용자 spec 그대로)
+
+**검증**:
+- `tsc --noEmit` 통과
+- `npm run test:run` 16/16 GREEN
+- `npm run build` 통과 (JS 541.99 → 541.90 KB, dynamic 계산 제거로 미세 감소)
+
+**기대 효과**:
+- 시작 직후 차트 비어 있음 (xAxis 라벨만 보이고 라인 X)
+- 첫 batch → 우측 가장자리에 짧은 라인 등장
+- 시간 흐를수록 좌측으로 grow, 4-8초 후 윈도우 가득
+- 이후 정상 우→좌 슬라이드
+- xAxis 가 매 batch 재스케일 안 되므로 "막대" 시각 부작용 없음
+
+**참조**: `src/ui/eeg-view.ts`, `src/ui/ppg-view.ts`, `src/ui/acc-view.ts`.
+
+---
+
 ### 2026-05-02 (밤) — ACC view 4-row + Magnitude (sensor-dashboard 미러) [PROGRESS]
 
 **무엇을**: `src/ui/acc-view.ts` 재작성. sensor-dashboard `ACCVisualizer.tsx` 의 4-row 레이아웃 미러링 + Magnitude 차트 추가.

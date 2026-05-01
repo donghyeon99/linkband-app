@@ -14,12 +14,13 @@
  *     view.onBatch(ppgBatch)
  *     view.dispose()
  */
-import type { PpgBatch } from "../linkband/models";
+import { PPG_FS, type PpgBatch } from "../linkband/models";
 import { type ChartHandle, buildMultiLineOption, createChart } from "./chart";
 import { createMetricCard, type MetricCardHandle } from "./metric-card";
 import { chartColors, uiColors } from "./theme";
 
 const PPG_BUFFER_SIZE = 400; // ~8s @ 50Hz
+const PPG_WINDOW_SEC = PPG_BUFFER_SIZE / PPG_FS; // = 8 — xAxis 고정 윈도우
 const STYLE_ID = "ppg-view-style";
 
 export interface PpgViewHandle {
@@ -266,11 +267,11 @@ export function createPpgView(container: HTMLElement): PpgViewHandle {
       const fs = batch.fs;
       const irLast = Math.max(irBuf.length - 1, 0);
       const redLast = Math.max(redBuf.length - 1, 0);
-      const maxLen = Math.max(irBuf.length, redBuf.length, 1);
+      // xAxis 는 PPG_WINDOW_SEC 고정 → 라인은 우측에서 좌측으로 자라남.
       const irData: Array<[number, number]> = irBuf.map((v, i) => [(i - irLast) / fs, v]);
       const redData: Array<[number, number]> = redBuf.map((v, i) => [(i - redLast) / fs, v]);
       filteredChart.chart.setOption({
-        xAxis: { min: -(maxLen - 1) / fs, max: 0 },
+        xAxis: { min: -PPG_WINDOW_SEC, max: 0 },
         series: [{ data: irData }, { data: redData }],
       });
     },

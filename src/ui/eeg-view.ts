@@ -16,11 +16,12 @@
  *     view.onBatch(eegBatch)
  *     view.dispose()
  */
-import type { EegBatch } from "../linkband/models";
+import { EEG_FS, type EegBatch } from "../linkband/models";
 import { type ChartHandle, buildRealtimeLineOption, createChart } from "./chart";
 import { chartColors, uiColors } from "./theme";
 
 const EEG_BUFFER_SIZE = 2000; // ~4s @ 500Hz
+const EEG_WINDOW_SEC = EEG_BUFFER_SIZE / EEG_FS; // = 4 — xAxis 고정 윈도우 (sensor-dashboard appendCap 의 시간 등가)
 const SATURATION_THRESHOLD_UV = 300_000;
 const STYLE_ID = "eeg-view-style";
 
@@ -282,14 +283,16 @@ export function createEegView(container: HTMLElement): EegViewHandle {
       ch2.saturatedBanner.style.display = ch2Sat ? "block" : "none";
 
       // 좌표는 초 단위 — 가장 오래된 = -(N-1)/fs, 최신 = 0.
+      // chartData 는 buffer 길이 기반 — buffer 차오를수록 좌측으로 grow.
+      // xAxis 는 EEG_WINDOW_SEC 고정 → 빈 좌측 영역은 그냥 비어 있음 (라인 X).
       const ch1Data: Array<[number, number]> = ch1Buf.map((v, i) => [(i - ch1Last) / fs, v]);
       const ch2Data: Array<[number, number]> = ch2Buf.map((v, i) => [(i - ch2Last) / fs, v]);
       chart1.chart.setOption({
-        xAxis: { min: -ch1Last / fs, max: 0 },
+        xAxis: { min: -EEG_WINDOW_SEC, max: 0 },
         series: [{ data: ch1Data }],
       });
       chart2.chart.setOption({
-        xAxis: { min: -ch2Last / fs, max: 0 },
+        xAxis: { min: -EEG_WINDOW_SEC, max: 0 },
         series: [{ data: ch2Data }],
       });
     },

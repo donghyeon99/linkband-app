@@ -14,7 +14,7 @@
  *     view.onBatch(accBatch)
  *     view.dispose()
  */
-import type { AccBatch } from "../linkband/models";
+import { ACC_FS, type AccBatch } from "../linkband/models";
 import {
   type ChartHandle,
   buildMultiLineOption,
@@ -24,6 +24,7 @@ import {
 import { chartColors, rgba, uiColors } from "./theme";
 
 const ACC_BUFFER_SIZE = 200; // ~8s @ 25Hz
+const ACC_WINDOW_SEC = ACC_BUFFER_SIZE / ACC_FS; // = 8 — xAxis 고정 윈도우
 
 export interface AccViewHandle {
   onBatch(batch: AccBatch): void;
@@ -242,19 +243,19 @@ export function createAccView(container: HTMLElement): AccViewHandle {
       const yLast = Math.max(yBuf.length - 1, 0);
       const zLast = Math.max(zBuf.length - 1, 0);
       const magLast = Math.max(magBuf.length - 1, 0);
-      const maxLen = Math.max(xBuf.length, yBuf.length, zBuf.length, 1);
 
+      // xAxis 는 ACC_WINDOW_SEC 고정 → buffer 차오를수록 라인이 좌측으로 grow.
       const xData: Array<[number, number]> = xBuf.map((v, i) => [(i - xLast) / fs, v]);
       const yData: Array<[number, number]> = yBuf.map((v, i) => [(i - yLast) / fs, v]);
       const zData: Array<[number, number]> = zBuf.map((v, i) => [(i - zLast) / fs, v]);
       const magData: Array<[number, number]> = magBuf.map((v, i) => [(i - magLast) / fs, v]);
 
       waveChart.chart.setOption({
-        xAxis: { min: -(maxLen - 1) / fs, max: 0 },
+        xAxis: { min: -ACC_WINDOW_SEC, max: 0 },
         series: [{ data: xData }, { data: yData }, { data: zData }],
       });
       magChart.chart.setOption({
-        xAxis: { min: -magLast / fs, max: 0 },
+        xAxis: { min: -ACC_WINDOW_SEC, max: 0 },
         series: [{ data: magData }],
       });
     },
