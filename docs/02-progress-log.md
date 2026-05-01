@@ -49,6 +49,39 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 (밤) — PPG view 3-row 구조 (sensor-dashboard 미러) [PROGRESS]
+
+**무엇을**: `src/ui/ppg-view.ts` 재작성. sensor-dashboard `PPGVisualizer.tsx` 의 3-row 레이아웃 정확히 미러링.
+
+**구조**:
+1. **Hero card** — "💓 PPG Pulse Analysis" + 설명문 (sensor-dashboard 그대로)
+2. **2-col Row** (≥1024px 에서 2열, 모바일 1열):
+   - 좌: **🔧 Filtered PPG Signal** — h3 + 설명("Red/IR LED signals passed through a 0.5-5.0Hz bandpass filter to isolate the heart-beat pattern (DC removed)") + LeadOff banner (DOM only, parser 가 PPG 별도 lead-off 정보 없음 — Q8) + raw IR/RED multi-line 차트 + 캡션 "Pre-filter pulse waveform — DSP filter pending"
+   - 우: **📈 PPG Signal Quality Index (SQI)** — 순수 placeholder ("DSP not yet implemented")
+3. **Full-width**: **💓 Heart Rate Variability Metrics** — 14 cards 그대로 (BPM/SpO₂/HR Max/Min/Stress/RMSSD/SDNN/SDSD/LF/HF Power/LF/HF/AVNN/pNN50/pNN20). 모두 update(null) → "—".
+
+**제거**:
+- 이전의 별도 Raw IR/RED 패널 → Filtered card 안으로 흡수 (캡션으로 의미 명시).
+- 이전의 BPM trend placeholder → 제거 (sensor-dashboard PPGVisualizer 안에 없음).
+
+**디자인 디테일**:
+- ensureStyles() 가 `.ppg-grid-2col` (반응형 1↔2col) + `.ppg-metrics-grid` 주입 (1회).
+- DOM helper (`makeCard` / `makeCardTitle` / `makeCardDesc` / `makeBanner` / `makePlaceholder`) 는 eeg-view.ts 와 동일 패턴 — 파일 간 공유 X (가드레일대로 ppg-view.ts 만 수정).
+- 좌표 변환·tooltip 형식 동일 (시간축 초 단위, "t = X.XXs").
+
+**가드레일**:
+- 새 폴더 0, 새 dependency 0, DSP 0
+- chart.ts / parser.ts / models.ts / main.ts / eeg-view.ts / acc-view.ts 수정 0
+- Tailwind / shadcn / React / Zustand 도입 0
+
+**검증**: `tsc --noEmit` 통과. `npm run test:run` 16/16 GREEN. `npm run build` 통과 (JS 538.55 → 539.14 KB).
+
+**다음 단계**: ACC view 4-row + Magnitude (단순 산술 √(x²+y²+z²)).
+
+**참조**: `src/ui/ppg-view.ts`, sensor-dashboard `components/ppg/PPGVisualizer.tsx`.
+
+---
+
 ### 2026-05-02 (밤) — sticky Header+Tabs 보정: scroll-padding + 탭 전환 시 scrollTo [PROGRESS]
 
 **무엇을**: sticky Header (~64px) + Tabs (~50px) = ~114px 가 hero card 를 가리던 문제 해결. 두 가지 처리:
