@@ -214,6 +214,9 @@ export function createTabs(
       activeId = t.id;
       applyActive(t.id);
       onChange(t.id);
+      // 탭 전환 시 페이지 최상단으로 스크롤 — 스크롤 위치가 이전 탭에서 깊게
+      // 들어가 있어도 새 탭의 hero card 가 viewport 에 보이도록.
+      window.scrollTo({ top: 0, behavior: "smooth" });
     });
     buttons.set(t.id, btn);
     list.appendChild(btn);

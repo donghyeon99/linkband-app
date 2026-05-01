@@ -28,6 +28,10 @@
         font-size: 0.75rem;
         color: #6b6b7e;
       }
+      /* sticky Header (~64px) + Tabs (~50px) ≈ 114px. 130px 버퍼로 주면
+         scrollIntoView 류 navigation 시 hero card 가 가려지지 않음. */
+      html { scroll-padding-top: 130px; }
+      main section { scroll-margin-top: 130px; }
     </style>
   </head>
   <body>

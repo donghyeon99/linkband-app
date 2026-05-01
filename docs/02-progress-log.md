@@ -49,6 +49,40 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 (밤) — sticky Header+Tabs 보정: scroll-padding + 탭 전환 시 scrollTo [PROGRESS]
+
+**무엇을**: sticky Header (~64px) + Tabs (~50px) = ~114px 가 hero card 를 가리던 문제 해결. 두 가지 처리:
+
+**1. CSS scroll-margin / scroll-padding** (`index.html`):
+- `html { scroll-padding-top: 130px; }` — html 스크롤 컨테이너 자체가 130px 패딩을 가져서 anchor navigation / `scrollIntoView()` 호출 시 sticky 뒤로 안 들어감.
+- `main section { scroll-margin-top: 130px; }` — 각 view 의 root section 에 동일 마진. element 단위 scroll-into-view 도 보장.
+- 130px = sticky chrome (~114px) + 16px 버퍼.
+
+**2. 탭 전환 시 scrollTo** (`src/ui/layout.ts` `createTabs`):
+- onChange 콜백 호출 직후 `window.scrollTo({ top: 0, behavior: "smooth" })` 추가.
+- 사용자가 EEG 탭에서 깊게 스크롤한 상태로 PPG 탭 클릭 → 페이지 최상단으로 부드럽게 복귀 → 새 탭의 hero card 가 viewport 에 보임.
+- 같은 탭 재클릭 시 (activeId 동일) early return — 스크롤 안 일어남.
+
+**가드레일**:
+- 새 폴더 0, 새 dependency 0, DSP 0
+- chart.ts / parser.ts / models.ts / main.ts 수정 0
+- ppg-view.ts, acc-view.ts 수정 0
+- index.html 의 CSS 추가는 vanilla — Tailwind 도입 X
+- 사용자가 step 2 에서 "main.ts 의 탭 변경 핸들러" 옵션도 제시했으나 main.ts 수정은 가드레일에 잡혀 있어 layout.ts 의 createTabs 에서 처리.
+
+**검증**:
+- `tsc --noEmit` 통과
+- `npm run test:run` 16/16 GREEN
+- `npm run build` 통과 (HTML 1.26 → 1.51 KB, JS 538.51 → 538.55 KB)
+- Vite dev probe: `/` 200, `scroll-padding-top` + `scroll-margin-top` 둘 다 page HTML 에 포함 확인.
+
+**사용자 검증 (돌아오시면)**:
+- `npm run dev` → EEG 탭에서 스크롤 다운 → PPG 탭 클릭 → 페이지가 최상단으로 부드럽게 스크롤 → 💓 PPG hero card 가 viewport 에 즉시 보임. ACC 도 동일.
+
+**참조**: `index.html`, `src/ui/layout.ts` (`createTabs` onChange).
+
+---
+
 ### 2026-05-02 (밤) — EEG view 레이아웃 ch1/ch2 분리 + 5-row 구조 [PROGRESS]
 
 **무엇을**: sensor-dashboard `EEGVisualizer.tsx` 의 5-row 레이아웃을 정확히 미러링하도록 `src/ui/eeg-view.ts` 재작성.
