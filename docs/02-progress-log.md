@@ -49,6 +49,24 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 — ui/acc-view.ts (3-axis raw chart) [PROGRESS]
+
+**무엇을**: ACC 3-axis raw 차트 단일 패널. sensor-dashboard `ACCVisualizer.tsx` 의 3 패널 중 raw 만 포팅 (magnitude / motion cards 는 DSP 영역).
+
+**구성** (createAccView(container) → { onBatch, dispose }):
+- Section header: `📐 ACC Acceleration Analysis` + 축별 색 의미 + sample rate.
+- ECharts 3-line: X (red) / Y (green) / Z (blue), 색은 sensor-dashboard `theme.ts` 그대로.
+- y 범위 auto-scale — firmware IMU 스케일 미확정 (±2g 면 1g ≈ 16384 LSB 이지만 g 단위 변환은 DSP 단계).
+- Window: 200 samples (8s @ 25Hz) — sensor-dashboard `ACC_BUFFER_SIZE` 동일.
+
+**검증**: `tsc --noEmit` 통과. `npm run build` 7.43 KB (main.ts wiring 은 step 6).
+
+**다음 단계**: main.ts 에 view 3개 wiring + index.html 레이아웃 갱신 — 자율모드 마지막 커밋.
+
+**참조**: `src/ui/acc-view.ts`, sensor-dashboard `components/acc/AccRawChart.tsx`.
+
+---
+
 ### 2026-05-02 — ui/ppg-view.ts (full stack with DSP placeholders) [PROGRESS]
 
 **무엇을**: sensor-dashboard `PPGVisualizer.tsx` 의 모든 패널 미러링.
