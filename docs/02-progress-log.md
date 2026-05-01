@@ -49,6 +49,32 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 (밤) — PPG DSP 1/5: filter pipeline + peak detection [PROGRESS]
+
+**무엇을**: `src/linkband/dsp.ts` 에 PPG 필터 + peak 검출 추가. sensor-dashboard `ppgPipeline.ts` 의 filter/SQI 직접 포팅 (fs=50 동일, 스케일 없음). Peak 검출은 자체 작성 — sensor-dashboard 프런트엔드에 없음 (서버 의존).
+
+**Exports**:
+- `PPG_SAMPLE_RATE = 50`, `PPG_TRANSIENT_SAMPLES = 150` (~3s warm-up, 0.5Hz HP τ ≈ 0.32s × 3)
+- `PpgChannelFilter`, `createPpgChannelFilter`, `processPpgSample` — HP 0.5Hz → LP 5Hz cascade
+- `calculatePpgSqi(filtered)` — 25-sample sliding window, threshold 250, 0-100% scaled (linkband 동일)
+- `detectPpgPeaks(filtered, fs) → peakIndices` — adaptive threshold (max × 0.6), min 0.4s 간격 (150 BPM 상한). local max 조건 (`> prev && >= next`).
+- `peaksToRrSeconds(peaks, fs) → rrSeconds` — peak 인덱스 차이 / fs
+
+**자체 결정 (own derivation)**:
+- Peak 검출 알고리즘 — sensor-dashboard 가 외부 SDK (서버) 결과만 받아 저장하는 구조. 우리는 직접 산출 필요. EEG indices 와 마찬가지로 numerical 차이 가능성. spec §17 검증 항목에 준함.
+
+**가드레일**:
+- 새 폴더 0, 새 dependency 0
+- chart.ts / parser.ts / models.ts / main.ts / layout.ts / eeg-view.ts / acc-view.ts 수정 0
+
+**검증**: `tsc --noEmit` 통과. `npm run test:run` 37/37 GREEN.
+
+**다음**: PPG filter / peak detection 테스트 — step 2.
+
+**참조**: `src/linkband/dsp.ts`, sensor-dashboard `ppgPipeline.ts`.
+
+---
+
 ### 2026-05-02 (밤) — DSP 4/4: eeg-view DSP 와이어링 [PROGRESS]
 
 **무엇을**: DSP placeholder 4개 슬롯을 모두 활성화. `src/ui/eeg-view.ts` 전체 rewrite — filter cascade + SQI + spectrum + band power + indices 통합.

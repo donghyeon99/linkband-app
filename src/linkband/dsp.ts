@@ -446,6 +446,116 @@ export interface EegIndices {
   emotionalStability: number;
 }
 
+// ─── PPG filter pipeline (sensor-dashboard `ppgPipeline.ts` 미러) ─────────
+// fs=50Hz 동일 — 스케일 없음.
+
+export const PPG_SAMPLE_RATE = 50;
+/** ~3s warm-up. 0.5Hz HP biquad τ ≈ 0.32s 라 settling 까지 3 time constants 필요. */
+export const PPG_TRANSIENT_SAMPLES = 150;
+
+const PPG_HP_COEFS = highpassCoefs(PPG_SAMPLE_RATE, 0.5, BUTTERWORTH_Q);
+const PPG_LP_COEFS = lowpassCoefs(PPG_SAMPLE_RATE, 5.0, BUTTERWORTH_Q);
+
+export interface PpgChannelFilter {
+  hp: BiquadState;
+  lp: BiquadState;
+  samplesProcessed: number;
+}
+
+export const createPpgChannelFilter = (): PpgChannelFilter => ({
+  hp: createBiquadState(),
+  lp: createBiquadState(),
+  samplesProcessed: 0,
+});
+
+/**
+ * PPG 단일 raw 샘플 → HP (0.5Hz) → LP (5Hz) cascade. 0.5-5Hz 가 심박 펄스 대역.
+ * `filter` 를 in-place 갱신. transient (`PPG_TRANSIENT_SAMPLES` 동안) 에선 0.
+ */
+export function processPpgSample(filter: PpgChannelFilter, sample: number): number {
+  const h = processBiquad(PPG_HP_COEFS, filter.hp, sample);
+  const l = processBiquad(PPG_LP_COEFS, filter.lp, h);
+  const out = filter.samplesProcessed < PPG_TRANSIENT_SAMPLES ? 0 : l;
+  filter.samplesProcessed++;
+  return out;
+}
+
+const PPG_SQI_WINDOW = 25;
+const PPG_SQI_AMP_THRESHOLD = 250;
+
+/**
+ * Amplitude-based PPG SQI — sdk.linkband 로직. 25-sample sliding window 에서
+ * local DC 제거 후 amplitude ≤ 250 면 1.0, 초과분 비례 감점. 0-100% scaled.
+ */
+export function calculatePpgSqi(filteredData: number[]): number[] {
+  const len = filteredData.length;
+  const result = new Array<number>(len).fill(0);
+  for (let i = 0; i <= len - PPG_SQI_WINDOW; i++) {
+    let mean = 0;
+    for (let j = i; j < i + PPG_SQI_WINDOW; j++) mean += filteredData[j];
+    mean /= PPG_SQI_WINDOW;
+
+    let sum = 0;
+    for (let j = i; j < i + PPG_SQI_WINDOW; j++) {
+      const amp = Math.abs(filteredData[j] - mean);
+      if (amp <= PPG_SQI_AMP_THRESHOLD) {
+        sum += 1;
+      } else {
+        const excess = Math.min((amp - PPG_SQI_AMP_THRESHOLD) / PPG_SQI_AMP_THRESHOLD, 1);
+        sum += Math.max(0, 1 - excess);
+      }
+    }
+    const avg = sum / PPG_SQI_WINDOW;
+    for (let j = i; j < i + PPG_SQI_WINDOW; j++) {
+      result[j] = avg * 100;
+    }
+  }
+  return result;
+}
+
+/**
+ * 단순 PPG peak 검출 (own derivation — sensor-dashboard 프런트엔드에 없음, 서버 의존).
+ * Threshold = signal max × 0.6, 직전 peak 와 최소 0.4초 (≤ 150 BPM 상한) 간격.
+ *
+ * 반환: filtered 배열 안에서의 peak **인덱스** 배열. RR (sec) = `(peaks[i+1]-peaks[i])/fs`.
+ */
+export function detectPpgPeaks(filtered: number[], fs: number): number[] {
+  const peaks: number[] = [];
+  const n = filtered.length;
+  if (n < 3) return peaks;
+
+  // Adaptive threshold — signal 최대값의 60%.
+  let max = -Infinity;
+  for (const v of filtered) if (v > max) max = v;
+  if (max <= 0) return peaks; // 모든 값 ≤ 0 면 peak 없음 (DC 제거된 평탄 신호).
+  const threshold = max * 0.6;
+
+  const minInterval = Math.floor(fs * 0.4); // 0.4s = 150 BPM 상한
+  let lastPeak = -minInterval - 1;
+
+  for (let i = 1; i < n - 1; i++) {
+    if (
+      filtered[i] > threshold &&
+      filtered[i] > filtered[i - 1] &&
+      filtered[i] >= filtered[i + 1] &&
+      i - lastPeak >= minInterval
+    ) {
+      peaks.push(i);
+      lastPeak = i;
+    }
+  }
+  return peaks;
+}
+
+/** Peak 인덱스 → RR interval (seconds). */
+export function peaksToRrSeconds(peaks: number[], fs: number): number[] {
+  const rr: number[] = [];
+  for (let i = 1; i < peaks.length; i++) {
+    rr.push((peaks[i] - peaks[i - 1]) / fs);
+  }
+  return rr;
+}
+
 /** Band power → 7 EEG analysis indices. spectrum 결과를 spectrum-based 비율로 변환. */
 export function computeEegIndices(power: ComputedEegPower): EegIndices {
   const b = power.bands;
