@@ -14,11 +14,15 @@ students consume the resulting Python package and notebooks rather than co-autho
 - **Protocol spec is locked**: `docs/01-protocol-spec.md` (533 lines, reverse-engineered
   from [LooxidLabs/SDK-Android](https://github.com/LooxidLabs/SDK-Android) Kotlin SDK
   and [LooxidLabs/link_band_sdk](https://github.com/LooxidLabs/link_band_sdk) Python core).
+- **Progress & decision log**: `docs/02-progress-log.md` — chronological record of
+  everything since repo init. **Read this first** to know current state, then add an
+  entry whenever meaningful work happens (commit, decision, verification, issue).
 - **Bundle 1 (data model)** and **Bundle 2 (open questions strategy)** decisions are
   LOCKED — see §13 and §17 of the spec. Do not re-debate these unless explicitly flagged.
 - **Bundle 3 (API surface for student DX)** and **Bundle 4 (WebSocket format / repo
   layout / MVP order)** are deferred — to be revisited once code skeleton exists.
-- **No code yet.** First commit (`a0ac3cd`) is empty scaffold.
+- For current implementation state, see `docs/02-progress-log.md`. Do not duplicate
+  status here — keep this section pointing at the log.
 
 ## Architecture
 
@@ -48,6 +52,21 @@ Implement **`linkband/models.py`** per spec §13.
 - `uv` for dependency management. `uv sync` to set up.
 - Python **3.12**.
 - Format/lint: `ruff` (configured in pyproject.toml).
+
+## Logging discipline (mandatory)
+
+For every meaningful unit of work — a commit, a locked decision, an empirical
+verification, an issue/blocker, a fix — **add one entry at the top of `docs/02-progress-log.md`**.
+This is non-negotiable: it's how the supervisor session and any future session
+reconstruct what happened and why.
+
+Entry tags: `[DECISION]`, `[PROGRESS]`, `[VERIFIED]`, `[ISSUE]`, `[FIX]`. Body should
+state *what*, *result/decision*, *next step*, *references* (spec §, commit hash, file).
+If a decision changes the spec, update `01-protocol-spec.md` in the same commit and
+note the section in the log entry. See the file's "사용 규칙" header for full format.
+
+When starting a new session, **read `docs/02-progress-log.md` first** before doing
+anything — that is the source of truth for current state, not CLAUDE.md.
 
 ## Locked decisions (do NOT re-litigate)
 
