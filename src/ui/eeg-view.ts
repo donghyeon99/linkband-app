@@ -1,15 +1,15 @@
 /**
- * EEG view — sensor-dashboard `EEGVisualizer.tsx` 의 메인 패널 (filtered signal +
- * LeadOffBanner) 을 vanilla TS 로 미러링.
+ * EEG view — sensor-dashboard `EEGVisualizer.tsx` 의 전체 레이아웃을 vanilla TS 로 미러링.
  *
- * 단순화 (이번 범위 = 시각화만):
- * - sensor-dashboard 처럼 ch1/ch2 별도 차트로 가지 않고 두 라인을 한 차트에 (사용자 spec).
- * - DSP 패널 (SignalQualityChart, PowerSpectrumChart, BandPowerCards, IndexCards)
- *   는 본 단계 범위 밖 — 추가하지 않음. 차후 DSP 단계에서 별도 view 또는
- *   본 view 확장으로 결정.
- * - LeadOff 채널 분리 (sensor-dashboard 의 ch1/ch2 별 분기) 도 단순화 — firmware
- *   가 채널별인지 단일인지 미확정 (spec §17 Q2). 일단 batch 의 leadOff 샘플 중
- *   하나라도 true 면 banner 표시.
+ * 구조 (sensor-dashboard 동일):
+ *   1. Hero card        — "🧠 EEG Brain Wave Analysis" + 설명
+ *   2. 2-col Row        — Ch1 RawData (FP1) | Ch2 RawData (FP2). 각 카드 안에:
+ *                          h3 + 설명 + LeadOff banner + Saturated banner + Chart
+ *   3. 2-col Row        — Ch1 SQI | Ch2 SQI placeholder
+ *   4. 2-col Row        — Power Spectrum | Band Power placeholder
+ *   5. Full-width       — EEG Analysis Indices placeholder
+ *
+ * DSP 의존 패널 (3, 4, 5) 는 placeholder. DSP 도착 시 동일 카드에 차트 init.
  *
  * 외부 인터페이스:
  *     const view = createEegView(container)
@@ -17,49 +17,74 @@
  *     view.dispose()
  */
 import type { EegBatch } from "../linkband/models";
-import { type ChartHandle, buildMultiLineOption, createChart } from "./chart";
+import { type ChartHandle, buildRealtimeLineOption, createChart } from "./chart";
 import { chartColors, uiColors } from "./theme";
 
-const EEG_BUFFER_SIZE = 2000; // ~4s @ 500Hz (sensor-dashboard 의 EEG_BUFFER_SIZE 1000 @ 250Hz 의 fs 보정)
+const EEG_BUFFER_SIZE = 2000; // ~4s @ 500Hz
+const SATURATION_THRESHOLD_UV = 300_000;
+const STYLE_ID = "eeg-view-style";
 
 export interface EegViewHandle {
   onBatch(batch: EegBatch): void;
   dispose(): void;
 }
 
-export function createEegView(container: HTMLElement): EegViewHandle {
-  // Section panel — sensor-dashboard 의 `bg-section-bg border rounded-lg shadow p-6` 토큰 매핑.
-  const section = document.createElement("section");
-  section.className = "eeg-view";
-  section.style.cssText = `
+// ─── Style injection (1회) ────────────────────────────────────────────────
+// 2-col grid 는 반응형 (≥1024px 에서만 2열). inline style 로 @media 표현 못 하니
+// 모듈 첫 호출 시 <style> 태그 한 번 주입.
+function ensureStyles(): void {
+  if (document.getElementById(STYLE_ID)) return;
+  const s = document.createElement("style");
+  s.id = STYLE_ID;
+  s.textContent = `
+    .eeg-grid-2col {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.25rem;
+      margin-bottom: 1.5rem;
+    }
+    @media (min-width: 1024px) {
+      .eeg-grid-2col { grid-template-columns: 1fr 1fr; }
+    }
+  `;
+  document.head.appendChild(s);
+}
+
+// ─── DOM helpers ──────────────────────────────────────────────────────────
+
+function makeCard(): HTMLElement {
+  const card = document.createElement("div");
+  card.style.cssText = `
     background: ${uiColors.bgSection};
     border: 1px solid ${uiColors.border};
     border-radius: 8px;
     padding: 1.25rem;
-    margin-bottom: 1.5rem;
   `;
+  return card;
+}
 
-  const title = document.createElement("h2");
-  title.textContent = "🧠 EEG Brain Wave Analysis";
-  title.style.cssText = `
-    margin: 0 0 0.25rem 0;
-    font-size: 1.15rem;
-    font-weight: 700;
+function makeCardTitle(text: string, level: 2 | 3 = 3): HTMLElement {
+  const h = document.createElement(level === 2 ? "h2" : "h3");
+  h.textContent = text;
+  h.style.cssText = `
+    margin: 0 0 0.4rem 0;
+    font-size: ${level === 2 ? "1.15rem" : "1rem"};
+    font-weight: ${level === 2 ? "700" : "600"};
     color: ${uiColors.textPrimary};
   `;
-  section.appendChild(title);
+  return h;
+}
 
-  const subtitle = document.createElement("p");
-  subtitle.textContent = "Real-time EEG signal — Ch1 (FP1) + Ch2 (FP2). Last ~4s @ 500Hz.";
-  subtitle.style.cssText = `
-    margin: 0 0 1rem 0;
-    font-size: 0.85rem;
-    color: ${uiColors.textSecondary};
-  `;
-  section.appendChild(subtitle);
+function makeCardDesc(text: string): HTMLElement {
+  const p = document.createElement("p");
+  p.textContent = text;
+  p.style.cssText = `margin: 0 0 0.85rem 0; font-size: 0.85rem; color: ${uiColors.textSecondary};`;
+  return p;
+}
 
-  // LeadOff banner — sensor-dashboard `LeadOffBanner.tsx` 의 시각 구조 미러링.
-  const bannerStyle = `
+function makeBanner(text: string): HTMLElement {
+  const b = document.createElement("div");
+  b.style.cssText = `
     display: none;
     background: ${chartColors.warnBg};
     border: 1px solid ${chartColors.warnBorder};
@@ -69,53 +94,165 @@ export function createEegView(container: HTMLElement): EegViewHandle {
     color: #fca5a5;
     font-size: 0.85rem;
   `;
-  const banner = document.createElement("div");
-  banner.style.cssText = bannerStyle;
-  banner.textContent = "⚠ Electrode contact issue (lead-off detected) — signal quality may be degraded";
-  section.appendChild(banner);
+  b.textContent = text;
+  return b;
+}
 
-  // Saturated banner — 모든 샘플이 |ch1Uv| > 300,000 μV (rail-pinned) 이면 표시.
-  // 헤드밴드를 머리에 안 쓰면 floating 전극 → ADC 가 reference voltage 로 saturated.
-  // LeadOff 와 별개 신호이므로 둘 다 동시 표시 가능.
-  const saturatedBanner = document.createElement("div");
-  saturatedBanner.style.cssText = bannerStyle;
-  saturatedBanner.textContent =
-    "⚠ Electrodes appear floating — saturated to reference voltage. Place band on head to see real EEG.";
-  section.appendChild(saturatedBanner);
+function makePlaceholder(label: string, height: string): HTMLElement {
+  const ph = document.createElement("div");
+  ph.style.cssText = `
+    width: 100%;
+    height: ${height};
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: ${uiColors.bgBase};
+    border: 1px dashed ${uiColors.border};
+    border-radius: 6px;
+    color: ${uiColors.textMuted};
+    font-size: 0.85rem;
+    text-align: center;
+    padding: 0 1rem;
+  `;
+  ph.textContent = `${label} — DSP not yet implemented`;
+  return ph;
+}
 
-  // Chart host
+interface ChannelCard {
+  card: HTMLElement;
+  chartHost: HTMLElement;
+  leadOffBanner: HTMLElement;
+  saturatedBanner: HTMLElement;
+}
+
+function makeChannelCard(title: string, desc: string): ChannelCard {
+  const card = makeCard();
+  card.appendChild(makeCardTitle(title));
+  card.appendChild(makeCardDesc(desc));
+
+  const leadOffBanner = makeBanner(
+    "⚠ Electrode contact issue (lead-off detected) — signal quality may be degraded",
+  );
+  const saturatedBanner = makeBanner(
+    "⚠ Electrodes appear floating — saturated to reference voltage. Place band on head to see real EEG.",
+  );
+  card.appendChild(leadOffBanner);
+  card.appendChild(saturatedBanner);
+
   const chartHost = document.createElement("div");
-  chartHost.style.cssText = "width: 100%; height: 280px;";
-  section.appendChild(chartHost);
+  chartHost.style.cssText = "width: 100%; height: 220px;";
+  card.appendChild(chartHost);
 
-  container.appendChild(section);
+  return { card, chartHost, leadOffBanner, saturatedBanner };
+}
 
-  // ECharts: 멀티라인 — ch1 (FP1) + ch2 (FP2). y 범위는 sensor-dashboard 의
-  // RawDataChart 를 따라 ±150 μV (filtered signal 기준). saturated raw 샘플은
-  // 차트 경계에서 clip 되어 평평한 라인으로 표시된다.
-  const chart: ChartHandle = createChart(
-    chartHost,
-    buildMultiLineOption({
-      series: [
-        { name: "Ch1 (FP1)", color: chartColors.ch1Filtered },
-        { name: "Ch2 (FP2)", color: chartColors.ch2Filtered },
-      ],
+function buildChannelChart(host: HTMLElement, color: string, label: string): ChartHandle {
+  return createChart(
+    host,
+    buildRealtimeLineOption({
+      color,
       yName: "μV",
       yMin: -150,
       yMax: 150,
       yNameGap: 50,
       tooltipFormatter: (params: unknown) => {
-        const arr = params as Array<{ seriesName: string; value: [number, number] }>;
+        const arr = params as Array<{ value: [number, number] }>;
         if (!Array.isArray(arr) || arr.length === 0) return "";
         const t = arr[0]?.value?.[0] ?? 0;
-        const lines = [`t = ${t.toFixed(2)}s`];
-        for (const p of arr) lines.push(`${p.seriesName}: ${p.value[1].toFixed(2)} μV`);
-        return lines.join("<br/>");
+        const v = arr[0]?.value?.[1] ?? 0;
+        return `t = ${t.toFixed(2)}s<br/>${label}: ${v.toFixed(2)} μV`;
       },
     }),
   );
+}
 
-  // Sliding window buffers.
+// ─── createEegView ─────────────────────────────────────────────────────────
+
+export function createEegView(container: HTMLElement): EegViewHandle {
+  ensureStyles();
+
+  const root = document.createElement("section");
+  root.className = "eeg-view-root";
+
+  // (1) Hero card.
+  const hero = makeCard();
+  hero.appendChild(makeCardTitle("🧠 EEG Brain Wave Analysis", 2));
+  const heroSub = document.createElement("p");
+  heroSub.textContent = "Real-time EEG signal processing and analysis visualization.";
+  heroSub.style.cssText = `margin: 0; font-size: 0.9rem; color: ${uiColors.textSecondary};`;
+  hero.appendChild(heroSub);
+  hero.style.marginBottom = "1.5rem";
+  root.appendChild(hero);
+
+  // (2) Ch1/Ch2 RawData 2-col row.
+  const row1 = document.createElement("div");
+  row1.className = "eeg-grid-2col";
+  const ch1 = makeChannelCard(
+    "🔧 Ch1 Filtered EEG Signal (FP1)",
+    "Channel 1 (FP1) signal processing — 60Hz notch + 1-45Hz bandpass filter (DSP pending; raw signal shown for now).",
+  );
+  const ch2 = makeChannelCard(
+    "🔧 Ch2 Filtered EEG Signal (FP2)",
+    "Channel 2 (FP2) signal processing — 60Hz notch + 1-45Hz bandpass filter (DSP pending; raw signal shown for now).",
+  );
+  row1.appendChild(ch1.card);
+  row1.appendChild(ch2.card);
+  root.appendChild(row1);
+
+  // (3) SQI 2-col placeholder.
+  const row2 = document.createElement("div");
+  row2.className = "eeg-grid-2col";
+  for (const [title, desc] of [
+    ["📈 Ch1 Signal Quality Index (SQI)", "Channel 1 (FP1) electrode contact and signal quality monitoring."],
+    ["📈 Ch2 Signal Quality Index (SQI)", "Channel 2 (FP2) electrode contact and signal quality monitoring."],
+  ] as const) {
+    const c = makeCard();
+    c.appendChild(makeCardTitle(title));
+    c.appendChild(makeCardDesc(desc));
+    c.appendChild(makePlaceholder("SQI chart", "180px"));
+    row2.appendChild(c);
+  }
+  root.appendChild(row2);
+
+  // (4) Power Spectrum + Band Power placeholders.
+  const row3 = document.createElement("div");
+  row3.className = "eeg-grid-2col";
+  for (const [title, desc, label] of [
+    [
+      "🌈 Power Spectrum (1-45Hz)",
+      "Ch1, Ch2 frequency-domain EEG signal analysis.",
+      "Power Spectrum",
+    ],
+    [
+      "🎯 Frequency Band Power",
+      "Real-time band-level power — Delta, Theta, Alpha, Beta, Gamma.",
+      "Band Power cards",
+    ],
+  ] as const) {
+    const c = makeCard();
+    c.appendChild(makeCardTitle(title));
+    c.appendChild(makeCardDesc(desc));
+    c.appendChild(makePlaceholder(label, "200px"));
+    row3.appendChild(c);
+  }
+  root.appendChild(row3);
+
+  // (5) Full-width Indices placeholder.
+  const idxCard = makeCard();
+  idxCard.appendChild(makeCardTitle("🧠 EEG Analysis Indices"));
+  idxCard.appendChild(
+    makeCardDesc("Real-time EEG analysis — focus, relaxation, stress, and 4 more indices."),
+  );
+  idxCard.appendChild(makePlaceholder("EEG Analysis Indices", "180px"));
+  root.appendChild(idxCard);
+
+  container.appendChild(root);
+
+  // ─── Charts (single-line each) ──────────────────────────────────────────
+  const chart1 = buildChannelChart(ch1.chartHost, chartColors.ch1Filtered, "Ch1 (FP1)");
+  const chart2 = buildChannelChart(ch2.chartHost, chartColors.ch2Filtered, "Ch2 (FP2)");
+
+  // ─── Buffers + onBatch ──────────────────────────────────────────────────
   const ch1Buf: number[] = [];
   const ch2Buf: number[] = [];
 
@@ -129,33 +266,37 @@ export function createEegView(container: HTMLElement): EegViewHandle {
       pushAndTrim(ch1Buf, batch.ch1Uv);
       pushAndTrim(ch2Buf, batch.ch2Uv);
 
-      // LeadOff: 본 batch 안에 lead-off 샘플이 하나라도 있으면 banner 표시.
-      const anyLeadOff = batch.leadOff.some((v) => v);
-      banner.style.display = anyLeadOff ? "block" : "none";
-
-      // Saturated: 본 batch 의 모든 ch1 샘플이 ±300,000 μV 밖이면 floating 전극으로 판단.
-      // 실 신호는 일반적으로 ±200 μV 안 (filter 전 DC offset 포함해도 ±수 mV).
-      // 336,083 μV (= 0x7FFFFF * LSB) 가 saturation 임계점.
-      const saturated = batch.ch1Uv.every((v) => Math.abs(v) > 300_000);
-      saturatedBanner.style.display = saturated ? "block" : "none";
-
-      // 좌표를 초 단위로 변환 — 가장 오래된 샘플 = -((N-1)/fs), 최신 = 0.
-      // 신호가 우→좌로 흐르는 시각적 의미 부여.
       const fs = batch.fs;
-      const maxLen = Math.max(ch1Buf.length, ch2Buf.length, 1);
-      const ch1Last = ch1Buf.length - 1;
-      const ch2Last = ch2Buf.length - 1;
+      const ch1Last = Math.max(ch1Buf.length - 1, 0);
+      const ch2Last = Math.max(ch2Buf.length - 1, 0);
+
+      // LeadOff: parser 가 채널별 분리 정보 없음 (spec §17 Q2 미해결) — 양쪽 카드에 동일 토글.
+      const anyLeadOff = batch.leadOff.some((v) => v);
+      ch1.leadOffBanner.style.display = anyLeadOff ? "block" : "none";
+      ch2.leadOffBanner.style.display = anyLeadOff ? "block" : "none";
+
+      // Saturated: per-channel — ch1Uv 와 ch2Uv 각각 검사.
+      const ch1Sat = batch.ch1Uv.every((v) => Math.abs(v) > SATURATION_THRESHOLD_UV);
+      const ch2Sat = batch.ch2Uv.every((v) => Math.abs(v) > SATURATION_THRESHOLD_UV);
+      ch1.saturatedBanner.style.display = ch1Sat ? "block" : "none";
+      ch2.saturatedBanner.style.display = ch2Sat ? "block" : "none";
+
+      // 좌표는 초 단위 — 가장 오래된 = -(N-1)/fs, 최신 = 0.
       const ch1Data: Array<[number, number]> = ch1Buf.map((v, i) => [(i - ch1Last) / fs, v]);
       const ch2Data: Array<[number, number]> = ch2Buf.map((v, i) => [(i - ch2Last) / fs, v]);
-
-      chart.chart.setOption({
-        xAxis: { min: -(maxLen - 1) / fs, max: 0 },
-        series: [{ data: ch1Data }, { data: ch2Data }],
+      chart1.chart.setOption({
+        xAxis: { min: -ch1Last / fs, max: 0 },
+        series: [{ data: ch1Data }],
+      });
+      chart2.chart.setOption({
+        xAxis: { min: -ch2Last / fs, max: 0 },
+        series: [{ data: ch2Data }],
       });
     },
     dispose(): void {
-      chart.dispose();
-      section.remove();
+      chart1.dispose();
+      chart2.dispose();
+      root.remove();
     },
   };
 }

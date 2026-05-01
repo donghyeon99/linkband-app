@@ -49,6 +49,41 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 (밤) — EEG view 레이아웃 ch1/ch2 분리 + 5-row 구조 [PROGRESS]
+
+**무엇을**: sensor-dashboard `EEGVisualizer.tsx` 의 5-row 레이아웃을 정확히 미러링하도록 `src/ui/eeg-view.ts` 재작성.
+
+**구조 (sensor-dashboard 동일)**:
+1. **Hero card** — "🧠 EEG Brain Wave Analysis" + 설명문
+2. **2-col Row** — Ch1 RawData (FP1) | Ch2 RawData (FP2) 분리 카드. 각 카드 = h3 + 설명 + LeadOff banner + Saturated banner + 차트.
+3. **2-col Row** — Ch1 SQI | Ch2 SQI placeholder
+4. **2-col Row** — Power Spectrum | Band Power placeholder
+5. **Full-width** — EEG Analysis Indices placeholder
+
+**구현 디테일**:
+- 2-col grid 는 반응형 (`@media min-width: 1024px` 에서만 2열). inline style 로 @media 표현 못 하니 모듈 첫 호출 시 `<style id="eeg-view-style">` 한 번 주입 (`ensureStyles()`).
+- 각 카드 = 공통 `makeCard()` 헬퍼. 제목/설명/배너/placeholder 도 헬퍼로 추출.
+- 차트는 `buildRealtimeLineOption` 단일 라인으로 ch1/ch2 각각 별도 (이전 multi-line 통합 차트 → 분리). 색은 sensor-dashboard 의 RawDataChart 와 동일 (ch1=blue, ch2=red).
+- 차트당 sliding-window 좌표 변환은 그대로 — 가장 오래된 = -(N-1)/fs, 최신 = 0.
+
+**Banner 동작**:
+- **LeadOff**: parser 가 채널별 분리 정보 없음 (spec §17 Q2 미해결) — 양쪽 카드에 동일 토글. 채널별 분리는 firmware 의미 확인 후.
+- **Saturated**: per-channel — `batch.ch1Uv.every` / `batch.ch2Uv.every` 각각 검사 → 카드별 독립 토글.
+
+**가드레일**:
+- 새 폴더 0, 새 dependency 0, DSP 0
+- chart.ts / parser.ts / models.ts / main.ts 수정 0
+- ppg-view.ts, acc-view.ts 수정 0
+- `<style>` 태그 1회 주입은 vanilla CSS — Tailwind/shadcn 미사용
+
+**검증**: `tsc --noEmit` 통과. `npm run test:run` 16/16 GREEN. `npm run build` 통과 (JS 534.46 → 538.51 KB, +4 KB).
+
+**다음 단계**: Hero title 이 sticky Header+Tabs 뒤에 가리지 않도록 scroll behavior 수정.
+
+**참조**: `src/ui/eeg-view.ts`, sensor-dashboard `components/eeg/EEGVisualizer.tsx`.
+
+---
+
 ### 2026-05-02 (밤) — EEG saturated electrode 배너 [PROGRESS]
 
 **무엇을**: EEG dump 가 saturated (rail-pinned) 라 평평한 라인이 그려져 "이상해 보임" 이라는 사용자 피드백 처리. 별도 안내 배너 추가.
