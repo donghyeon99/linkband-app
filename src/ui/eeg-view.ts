@@ -97,8 +97,8 @@ export function createEegView(container: HTMLElement): EegViewHandle {
       tooltipFormatter: (params: unknown) => {
         const arr = params as Array<{ seriesName: string; value: [number, number] }>;
         if (!Array.isArray(arr) || arr.length === 0) return "";
-        const idx = arr[0]?.value?.[0] ?? 0;
-        const lines = [`Sample #${idx}`];
+        const t = arr[0]?.value?.[0] ?? 0;
+        const lines = [`t = ${t.toFixed(2)}s`];
         for (const p of arr) lines.push(`${p.seriesName}: ${p.value[1].toFixed(2)} μV`);
         return lines.join("<br/>");
       },
@@ -123,12 +123,17 @@ export function createEegView(container: HTMLElement): EegViewHandle {
       const anyLeadOff = batch.leadOff.some((v) => v);
       banner.style.display = anyLeadOff ? "block" : "none";
 
-      const ch1Data: Array<[number, number]> = ch1Buf.map((v, i) => [i, v]);
-      const ch2Data: Array<[number, number]> = ch2Buf.map((v, i) => [i, v]);
+      // 좌표를 초 단위로 변환 — 가장 오래된 샘플 = -((N-1)/fs), 최신 = 0.
+      // 신호가 우→좌로 흐르는 시각적 의미 부여.
+      const fs = batch.fs;
       const maxLen = Math.max(ch1Buf.length, ch2Buf.length, 1);
+      const ch1Last = ch1Buf.length - 1;
+      const ch2Last = ch2Buf.length - 1;
+      const ch1Data: Array<[number, number]> = ch1Buf.map((v, i) => [(i - ch1Last) / fs, v]);
+      const ch2Data: Array<[number, number]> = ch2Buf.map((v, i) => [(i - ch2Last) / fs, v]);
 
       chart.chart.setOption({
-        xAxis: { min: 0, max: maxLen - 1 },
+        xAxis: { min: -(maxLen - 1) / fs, max: 0 },
         series: [{ data: ch1Data }, { data: ch2Data }],
       });
     },

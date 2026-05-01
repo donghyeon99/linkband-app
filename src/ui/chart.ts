@@ -56,7 +56,13 @@ export interface RealtimeLineOptions {
   area?: boolean;
   sampling?: "lttb" | "average" | "max" | "min" | "sum";
   tooltipFormatter?: (params: unknown) => string;
+  /** 시간 x-axis 표시 여부. 기본 true — sliding window 의 시간 흐름을 명시. */
+  showXAxis?: boolean;
+  /** x-axis 라벨. 기본 "time (s)". */
+  xAxisName?: string;
 }
+
+const X_AXIS_LABEL_FORMATTER = (v: number): string => `${v.toFixed(1)}s`;
 
 /** 단일 라인 + 고정 y 범위. EEG ch1/ch2 같은 단일 채널 차트 용도. */
 export function buildRealtimeLineOption(opts: RealtimeLineOptions): EChartsOption {
@@ -71,14 +77,25 @@ export function buildRealtimeLineOption(opts: RealtimeLineOptions): EChartsOptio
     area = false,
     sampling,
     tooltipFormatter,
+    showXAxis = true,
+    xAxisName = "time (s)",
   } = opts;
   return {
     tooltip: {
       trigger: "axis",
       ...(tooltipFormatter ? { formatter: tooltipFormatter } : {}),
     },
-    grid: { left: "12%", right: "5%", bottom: "8%", top: "8%" },
-    xAxis: { type: "value", show: false },
+    grid: { left: "12%", right: "5%", bottom: showXAxis ? "16%" : "8%", top: "8%" },
+    xAxis: showXAxis
+      ? {
+          type: "value",
+          name: xAxisName,
+          nameLocation: "middle",
+          nameGap: 25,
+          axisLabel: { ...axisLabelStyle, formatter: X_AXIS_LABEL_FORMATTER },
+          splitLine: splitLineStyle,
+        }
+      : { type: "value", show: false },
     yAxis: {
       type: "value",
       name: yName,
@@ -119,11 +136,25 @@ export interface MultiLineOptions {
   yNameGap?: number;
   legend?: boolean;
   tooltipFormatter?: (params: unknown) => string;
+  /** 시간 x-axis 표시 여부. 기본 true. */
+  showXAxis?: boolean;
+  /** x-axis 라벨. 기본 "time (s)". */
+  xAxisName?: string;
 }
 
 /** 다중 라인 + legend. PPG (IR/Red), ACC (X/Y/Z) 같은 멀티 채널 용도. */
 export function buildMultiLineOption(opts: MultiLineOptions): EChartsOption {
-  const { series, yName, yMin, yMax, yNameGap = 35, legend = true, tooltipFormatter } = opts;
+  const {
+    series,
+    yName,
+    yMin,
+    yMax,
+    yNameGap = 35,
+    legend = true,
+    tooltipFormatter,
+    showXAxis = true,
+    xAxisName = "time (s)",
+  } = opts;
   return {
     tooltip: {
       trigger: "axis",
@@ -138,8 +169,22 @@ export function buildMultiLineOption(opts: MultiLineOptions): EChartsOption {
           },
         }
       : {}),
-    grid: { left: "10%", right: "5%", bottom: "8%", top: legend ? "15%" : "8%" },
-    xAxis: { type: "value", show: false },
+    grid: {
+      left: "10%",
+      right: "5%",
+      bottom: showXAxis ? "16%" : "8%",
+      top: legend ? "15%" : "8%",
+    },
+    xAxis: showXAxis
+      ? {
+          type: "value",
+          name: xAxisName,
+          nameLocation: "middle",
+          nameGap: 25,
+          axisLabel: { ...axisLabelStyle, formatter: X_AXIS_LABEL_FORMATTER },
+          splitLine: splitLineStyle,
+        }
+      : { type: "value", show: false },
     yAxis: {
       type: "value",
       name: yName,

@@ -49,6 +49,38 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 (밤) — x-axis 시간축 표시 + 좌표를 초 단위로 [PROGRESS]
+
+**무엇을**: 차트가 "시간에 따른 그래프 형식이 아니다" 라는 사용자 피드백 처리. x-axis 가 숨겨져 있어서 시간 흐름이 안 보였던 문제.
+
+**`src/ui/chart.ts`** (option builder 갱신):
+- `RealtimeLineOptions` / `MultiLineOptions` 에 `showXAxis?: boolean` (기본 true) + `xAxisName?: string` (기본 "time (s)") 추가.
+- xAxis: type=value, name=시간 라벨, nameLocation=middle, nameGap=25, axisLabel formatter `(v) => v.toFixed(1)+"s"`. splitLine + axisLabelStyle 그대로.
+- grid.bottom 을 axis 표시 시 "16%" (라벨 자리), 숨김 시 "8%" 로 분기.
+
+**`eeg-view.ts` / `ppg-view.ts` / `acc-view.ts`**:
+- 좌표 변환만 수정: `[i, v]` → `[(i - lastIdx) / fs, v]`. 가장 오래된 샘플 = `-(N-1)/fs`, 최신 = 0. 신호가 우→좌 흐르는 시각.
+- xAxis min/max 도 동일 식으로 갱신.
+- `fs` 는 batch.fs 에서 — 하드코딩 X (EEG=500, PPG=50, ACC=25 모두 batch 가 들고 있음).
+- tooltip "Sample #N" → "t = X.XXs" 라벨 갱신 (좌표 변환 결과와 일관).
+
+**가드레일**:
+- 새 폴더 0, 새 dependency 0, DSP 0
+- main.ts / parser.ts / models.ts 수정 0
+- view 의 데이터 흐름·버퍼링 로직 (push, splice, length cap) 수정 0 — 좌표 변환·옵션만
+
+**검증**:
+- `tsc --noEmit` 통과
+- `npm run test:run` 16/16 GREEN
+- `npm run build` 통과 (JS 533.81 → 534.19 KB)
+- 좌표 reasoning: ch1Buf.length=2000 일 때 i=0 → -(1999)/500 = -3.998s, i=1999 → 0. ✓
+
+**다음 단계**: EEG saturated electrode 배너 추가 (step 2).
+
+**참조**: `src/ui/chart.ts`, `src/ui/eeg-view.ts`, `src/ui/ppg-view.ts`, `src/ui/acc-view.ts`.
+
+---
+
 ### 2026-05-02 (저녁) — VisualizerHeader (제목 + Streaming/SignalQuality 배지) [PROGRESS]
 
 **무엇을**: sensor-dashboard `components/visualizer/VisualizerHeader.tsx` 미러링. 자율모드 마지막 커밋 (3/3).

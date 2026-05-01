@@ -131,8 +131,8 @@ export function createPpgView(container: HTMLElement): PpgViewHandle {
       tooltipFormatter: (params: unknown) => {
         const arr = params as Array<{ seriesName: string; value: [number, number] }>;
         if (!Array.isArray(arr) || arr.length === 0) return "";
-        const idx = arr[0]?.value?.[0] ?? 0;
-        const lines = [`Sample #${idx}`];
+        const t = arr[0]?.value?.[0] ?? 0;
+        const lines = [`t = ${t.toFixed(2)}s`];
         for (const p of arr) lines.push(`${p.seriesName}: ${p.value[1]}`);
         return lines.join("<br/>");
       },
@@ -206,11 +206,15 @@ export function createPpgView(container: HTMLElement): PpgViewHandle {
       pushAndTrim(irBuf, batch.ir);
       pushAndTrim(redBuf, batch.red);
 
-      const irData: Array<[number, number]> = irBuf.map((v, i) => [i, v]);
-      const redData: Array<[number, number]> = redBuf.map((v, i) => [i, v]);
+      // 좌표를 초 단위로 (가장 오래된 = -(N-1)/fs, 최신 = 0). EEG/ACC view 와 동일 패턴.
+      const fs = batch.fs;
       const maxLen = Math.max(irBuf.length, redBuf.length, 1);
+      const irLast = irBuf.length - 1;
+      const redLast = redBuf.length - 1;
+      const irData: Array<[number, number]> = irBuf.map((v, i) => [(i - irLast) / fs, v]);
+      const redData: Array<[number, number]> = redBuf.map((v, i) => [(i - redLast) / fs, v]);
       rawChart.chart.setOption({
-        xAxis: { min: 0, max: maxLen - 1 },
+        xAxis: { min: -(maxLen - 1) / fs, max: 0 },
         series: [{ data: irData }, { data: redData }],
       });
     },

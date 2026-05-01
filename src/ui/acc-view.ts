@@ -62,8 +62,8 @@ export function createAccView(container: HTMLElement): AccViewHandle {
       tooltipFormatter: (params: unknown) => {
         const arr = params as Array<{ seriesName: string; value: [number, number] }>;
         if (!Array.isArray(arr) || arr.length === 0) return "";
-        const idx = arr[0]?.value?.[0] ?? 0;
-        const lines = [`Sample #${idx}`];
+        const t = arr[0]?.value?.[0] ?? 0;
+        const lines = [`t = ${t.toFixed(2)}s`];
         for (const p of arr) lines.push(`${p.seriesName}: ${p.value[1]}`);
         return lines.join("<br/>");
       },
@@ -85,12 +85,17 @@ export function createAccView(container: HTMLElement): AccViewHandle {
       pushAndTrim(yBuf, batch.y);
       pushAndTrim(zBuf, batch.z);
 
+      // 좌표를 초 단위로 (가장 오래된 = -(N-1)/fs, 최신 = 0). EEG/PPG view 와 동일 패턴.
+      const fs = batch.fs;
       const maxLen = Math.max(xBuf.length, yBuf.length, zBuf.length, 1);
-      const xData: Array<[number, number]> = xBuf.map((v, i) => [i, v]);
-      const yData: Array<[number, number]> = yBuf.map((v, i) => [i, v]);
-      const zData: Array<[number, number]> = zBuf.map((v, i) => [i, v]);
+      const xLast = xBuf.length - 1;
+      const yLast = yBuf.length - 1;
+      const zLast = zBuf.length - 1;
+      const xData: Array<[number, number]> = xBuf.map((v, i) => [(i - xLast) / fs, v]);
+      const yData: Array<[number, number]> = yBuf.map((v, i) => [(i - yLast) / fs, v]);
+      const zData: Array<[number, number]> = zBuf.map((v, i) => [(i - zLast) / fs, v]);
       chart.chart.setOption({
-        xAxis: { min: 0, max: maxLen - 1 },
+        xAxis: { min: -(maxLen - 1) / fs, max: 0 },
         series: [{ data: xData }, { data: yData }, { data: zData }],
       });
     },
