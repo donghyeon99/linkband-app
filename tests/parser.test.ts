@@ -1,8 +1,8 @@
 /**
- * src/linkband/parser.ts 단위 테스트 — Python reference (`reference-py/tests/test_parser.py`,
- * 15/15 GREEN at commit be16261) 의 13 의미 케이스를 그대로 포팅.
+ * src/linkband/parser.ts 단위 테스트 — 15 케이스 (synthetic + real-device fixture).
  *
- * 작성 시점에 parser.ts 미존재 → import 실패로 collection RED. 본체 작성 후 GREEN 으로 전환.
+ * Real-device hex 는 본 파일에 inline 됐고 (line 60-) 동일 hex 가
+ * `public/fixtures/real/{eeg,ppg,acc}.txt` 의 첫 줄에 존재.
  */
 import { describe, expect, it } from "vitest";
 
@@ -55,8 +55,8 @@ function accPacket(timeRaw: number, samples: Array<[number, number, number]>): U
 
 const EEG_LSB_UV = (1.0 * 4.033) / 12.0 / 8388607.0 * 1e6;
 
-// ─── Real-device fixtures (line 1 from reference-py/tests/fixtures/real/) ──
-// 동일한 hex 가 reference-py/tests/test_parser.py 에도 박혀 있고, byte-exact 일치 확인됨.
+// ─── Real-device fixtures (line 1 from public/fixtures/real/{eeg,ppg,acc}.txt) ──
+// hex 는 30s spike dump 의 첫 패킷.
 const EEG_REAL_LINE1 = hexToBytes("95200700" + "007fffff7fffff".repeat(25));
 const PPG_REAL_LINE1 = hexToBytes(
   "fda607000041060060320056b300602f0056b70060350056ae0060300056ad00602e0056b200602f" +

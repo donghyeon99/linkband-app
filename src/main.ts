@@ -1,17 +1,15 @@
 // Link Band frontend entry — Web Bluetooth + parser + ECharts views.
 //
 // Activation sequence mirrors spec §5.1: Battery notify first → EEG `start`
-// write → 1s wait → EEG/ACC/PPG notify in queue order. Same as the Python
-// `reference-py/linkband/spike_dump.py`.
+// write → 1s wait → EEG/ACC/PPG notify in queue order.
 //
-// Live BLE notifications and Replay (fetch the dump txt files from
-// reference-py) both feed the same on{Eeg,Ppg,Acc,Bat}Bytes pipeline,
-// which calls parser, then forwards the typed batch to the corresponding
-// view (src/ui/{eeg,ppg,acc}-view.ts).
+// Live BLE notifications and Replay (dev-only, fetches dump txt files from
+// `/public/fixtures/real{,1}/`) both feed the same on{Eeg,Ppg,Acc,Bat}Bytes
+// pipeline, which calls parser, then forwards the typed batch to the
+// corresponding view (src/ui/{eeg,ppg,acc}-view.ts).
 //
-// Page chrome (Header / Tabs / Footer) is provided by src/ui/layout.ts —
-// sensor-dashboard App.tsx layout mirror. Only the active tab's view
-// container is visible at a time.
+// Page chrome (Header / Tabs / Footer) is provided by src/ui/layout.ts.
+// Only the active tab's view container is visible at a time.
 
 import { Parser, parseBattery } from "./linkband/parser";
 import { createAccView } from "./ui/acc-view";
@@ -272,10 +270,8 @@ async function replayStream(
 }
 
 async function probeFixtureRoot(): Promise<string | null> {
-  for (const root of [
-    "/reference-py/tests/fixtures/real1",
-    "/reference-py/tests/fixtures/real",
-  ]) {
+  // Vite serves `public/` at root → `/fixtures/real1/eeg.txt` 식.
+  for (const root of ["/fixtures/real1", "/fixtures/real"]) {
     const probe = await fetch(`${root}/eeg.txt`).catch(() => null);
     if (probe?.ok) return root;
   }

@@ -65,13 +65,31 @@ export function createHeader(container: HTMLElement, opts: HeaderOptions): Heade
   brand.appendChild(logo);
 
   const brandText = document.createElement("div");
-  const brandTitle = document.createElement("div");
+  const brandTitleRow = document.createElement("div");
+  brandTitleRow.style.cssText = "display: flex; align-items: baseline; gap: 0.5rem;";
+  const brandTitle = document.createElement("span");
   brandTitle.textContent = "Link Band Dashboard";
   brandTitle.style.cssText = `font-size: 1rem; font-weight: 600; color: ${uiColors.textPrimary}; letter-spacing: -0.01em;`;
+  brandTitleRow.appendChild(brandTitle);
+  // Version badge — Vite 가 `__APP_VERSION__` 을 빌드 시점에 package.json 의 version 으로 substitute.
+  const versionBadge = document.createElement("span");
+  versionBadge.textContent = `v${__APP_VERSION__}`;
+  versionBadge.style.cssText = `
+    font-size: 0.65rem;
+    font-weight: 600;
+    color: #14b8a6;
+    background: rgba(20, 184, 166, 0.12);
+    border: 1px solid rgba(20, 184, 166, 0.3);
+    padding: 0.1rem 0.4rem;
+    border-radius: 0.3rem;
+    letter-spacing: 0.03em;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  `;
+  brandTitleRow.appendChild(versionBadge);
   const brandSub = document.createElement("div");
   brandSub.textContent = "Brain-Computer Interface Monitor";
   brandSub.style.cssText = `font-size: 0.72rem; color: ${uiColors.textSecondary}; margin-top: 1px;`;
-  brandText.appendChild(brandTitle);
+  brandText.appendChild(brandTitleRow);
   brandText.appendChild(brandSub);
   brand.appendChild(brandText);
 
@@ -373,7 +391,8 @@ export interface FooterHandle {
   dispose(): void;
 }
 
-const FOOTER_VERSION_LABEL = "Link Band v0.0.1";
+// `__APP_VERSION__` 는 vite.config.ts 의 define 으로 build 시점에 package.json 의 version 으로 치환.
+const FOOTER_VERSION_LABEL = `Link Band v${__APP_VERSION__}`;
 
 /**
  * sensor-dashboard `Footer.tsx` 미러 — Messages 카운트 + Rate (msg/s) + Status +

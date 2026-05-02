@@ -1,27 +1,6 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-*.egg
-*.egg-info/
-.eggs/
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
-
-# Virtual environments
-.venv/
-venv/
-ENV/
-
 # Build / dist
 build/
 dist/
-
-# Notebooks
-.ipynb_checkpoints/
 
 # Editors / OS
 .vscode/
@@ -29,13 +8,13 @@ dist/
 .DS_Store
 *.swp
 
-# Web (TypeScript / Vite primary deliverable, at repo root)
+# Web (TypeScript / Vite primary deliverable)
 node_modules/
-dist/
 .vite/
 coverage/
 .turbo/
 *.tsbuildinfo
+*.log
 .vercel/
 
 # bkit runtime state
@@ -48,7 +27,9 @@ recordings/
 *.parquet
 *.h5
 sensor_data_log/
-reference-py/tests/fixtures/real*/
+
+# BLE byte-dump replay fixtures (dev-only, raw sensor data — not source)
+public/fixtures/real*/
 
 # Local secrets / config
 .env

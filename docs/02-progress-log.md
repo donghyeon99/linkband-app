@@ -49,6 +49,62 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 (밤) — v0.1.0 첫 release-worthy bump + Python reference 정리 + 코드 walkthrough 문서 [DECISION] [PROGRESS]
+
+**무엇을**: 사용자 요청 3건을 한 묶음으로 처리.
+
+#### 1. 버전 셋업 (Plan A — 권장안 합의)
+- `package.json` `0.0.1 → 0.1.0`. 첫 feature-complete 상태 (BLE + parser + DSP +
+  visualization) 가 모인 시점이라 minor bump.
+- `vite.config.ts` 에 `define: { __APP_VERSION__: JSON.stringify(pkg.version) }`
+  추가 — build 시점에 단일 source of truth (package.json) 의 version 을 번들
+  안으로 inject.
+- `src/vite-env.d.ts` 신규 — `declare const __APP_VERSION__: string`. TS 타입 인식.
+- UI 갱신:
+  - `layout.ts` Header 의 brand 옆에 `v0.1.0` badge (teal pill, 0.65rem mono).
+  - `layout.ts` Footer 의 hard-coded `"Link Band v0.0.1"` → `${__APP_VERSION__}` 사용.
+- 커밋·태깅 규칙 정립 (CLAUDE.md `## Versioning` 섹션):
+  - `package.json` 만 source of truth.
+  - 마지막 release-worthy 커밋에서만 bump (매 커밋 X).
+  - bump 커밋에 `git tag v0.X.Y` + 메시지 끝에 `(v0.X.Y)`.
+
+#### 2. Python reference 제거
+- `reference-py/linkband/` (4 .py + `__init__.py`), `reference-py/tests/test_parser.py`,
+  `pyproject.toml`, `uv.lock` 모두 `git rm`. 추적되던 파일 7개.
+- `reference-py/tests/fixtures/{real,real1}/` (BLE 30s spike dump txt) 는
+  `public/fixtures/{real,real1}/` 로 이동. **`public/` 으로 옮기는 이유**: Vite
+  가 public 폴더 contents 를 root URL 에 자동 serve → main.ts 의 Replay 가
+  `/fixtures/real1/eeg.txt` 식으로 fetch 가능. fixtures 자체는 .gitignore 유지
+  (raw data, source 아님).
+- `main.ts` `probeFixtureRoot()` 경로 `/reference-py/tests/fixtures/...` →
+  `/fixtures/...`. Replay 동작 유지.
+- 코드 comment 정리 (실 동작은 변화 없음): `parser.ts` / `models.ts` /
+  `tests/parser.test.ts` / `main.ts` 의 `reference-py/...` 언급 제거 또는 갱신.
+- `.gitignore` 통째로 정리 — Python 관련 ruleset (8 lines) 삭제, fixtures 경로
+  갱신, `*.log` 추가 (vite.log 등).
+- README.md / CLAUDE.md — Python 섹션 모두 제거 + Cross-references 표에
+  sdk.linkband.store source-map 추출 위치 명시.
+
+#### 3. 코드 walkthrough 문서
+- 신규 `docs/03-code-walkthrough.md` — main.ts 진입점 / `src/linkband/` 데이터
+  처리 / `src/ui/` 시각화 구조 + 실제 코드 발췌. 한국어. 600-900줄.
+- 5 섹션: 진입점 → 데이터 처리 폴더 → UI 폴더 → 센서별 처리 흐름 요약 → 외부
+  reference. 각 sub-section 마다 file:line + 5–25줄 코드 발췌.
+- 향후 세션·신규 합류자가 이 한 문서로 전체 데이터 흐름을 따라갈 수 있도록.
+
+**검증**: `tsc --noEmit` clean, `npm run test:run` 67/67 GREEN, `npm run build`
+성공 + 번들 안 `v0.1.0` 두 군데 (header badge + footer label) 확인.
+
+**참조**:
+- 신규 파일: `docs/03-code-walkthrough.md`, `src/vite-env.d.ts`, `public/fixtures/`.
+- 삭제: `reference-py/`.
+- 수정: `package.json`, `vite.config.ts`, `.gitignore`, `README.md`, `CLAUDE.md`,
+  `src/main.ts`, `src/linkband/{models,parser}.ts`, `src/ui/layout.ts`,
+  `tests/parser.test.ts`.
+- Tag: `v0.1.0` (push 후 추가).
+
+---
+
 ### 2026-05-02 (저녁) — Power Spectrum 크기·범위 + index.html/README 영문화 [FIX]
 
 **무엇을**: 직전 커밋 (`6d0dbf3`) 후속 사용자 지적 두 건.

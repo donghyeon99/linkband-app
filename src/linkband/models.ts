@@ -1,21 +1,17 @@
 /**
- * Link Band 센서 배치 데이터 모델 (TS 포팅).
+ * Link Band 센서 배치 데이터 모델.
  *
  * BLE 패킷 1개 = 인스턴스 1개. 샘플당 객체가 아닌 typed array 묶음.
  * EEG 는 500Hz 라 50ms 마다 25 샘플 — 객체 단위 표현은 GC 압력만 키움.
  *
- * Python reference (numerical 정답지): reference-py/linkband/models.py.
  * 필드 의미·dtype·raw/변환값 동시 보관 결정은 spec §13 잠금 사항. 임의 확장 X.
  *
- * Python ↔ TS 필드 매핑 (의미 동일, 표기만 camelCase):
- *   t_device → tDevice, t_recv → tRecv, ch1_uv → ch1Uv, lead_off_raw → leadOffRaw 등.
- *
- * dtype 매핑:
- *   np.float64 → Float64Array
- *   np.int32   → Int32Array
- *   np.int16   → Int16Array
- *   np.uint8   → Uint8Array
- *   np.bool    → boolean[]   (JS 에 Bool typed array 없음 — 25개 boxed bool 의 GC 비용은 무시할 수준)
+ * dtype 선택:
+ *   Float64Array — 변환된 μV 값 (정밀도 우선).
+ *   Int32Array   — 24-bit signed raw ADC 카운트 (EEG ch{1,2}Raw, PPG red/ir).
+ *   Int16Array   — 16-bit signed (ACC x/y/z).
+ *   Uint8Array   — 1-byte raw (leadOffRaw 비트마스크).
+ *   boolean[]    — JS 에 Bool typed array 없음 — 25개 boxed bool 의 GC 비용은 무시할 수준.
  */
 
 /** EEG nominal sample rate. 실측 확정 (spec §7, §17 Q7) — Kotlin SDK 의 250 은 오류. */

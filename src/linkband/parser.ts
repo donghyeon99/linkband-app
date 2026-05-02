@@ -1,8 +1,7 @@
 /**
- * Link Band BLE 패킷 파서 (TS port of reference-py/linkband/parser.py).
+ * Link Band BLE 패킷 파서.
  *
- * Python 정답지: `reference-py/linkband/parser.py` (15/15 GREEN at commit be16261).
- * TS 측 포팅 검증: `tests/parser.test.ts` 13 의미 케이스 (Python 의 부분집합).
+ * 검증: `tests/parser.test.ts` — 15 케이스, real-device byte fixture 포함.
  *
  * 인스턴스 상태는 spec §13 보간 규칙용 — 마지막 샘플 시각을 센서별로 기억해서
  * 패킷 사이 균일한 1/fs 간격을 유지한다 (Kotlin `lastEegSampleTimestampMillis` 미러).
