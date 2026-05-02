@@ -24,6 +24,13 @@ export const EEG_FS = 500;
 export const PPG_FS = 50;
 /** ACC nominal sample rate (spec §9). */
 export const ACC_FS = 25;
+/**
+ * ACC LSB → g 변환 상수. spec §9 (line 300-301): "16-bit LE ±2g 모드에서 약 16384 LSB/g".
+ * 정지 시 한 축 (보통 z) 이 ±16384 LSB ≈ ±1g (중력) 로 측정됨. View layer 에서 g
+ * 단위 표시 시 raw int16 / `ACC_LSB_PER_G`. parser 출력은 raw int16 그대로 (Bundle 1
+ * §13 잠금: ACC dtype int16 보존).
+ */
+export const ACC_LSB_PER_G = 16384;
 
 /**
  * EEG BLE 패킷 1개 — 25 samples / 50ms @ 500Hz (spec §7).

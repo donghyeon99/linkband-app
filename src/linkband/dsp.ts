@@ -169,13 +169,13 @@ export interface BandRange {
   fMax: number;
 }
 
-/** sdk.linkband UI 와 동일 (gamma 가 50Hz 가 아닌 45Hz 캡). */
+/** sdk.linkband 배포본 EEGSignalProcessor.bands 와 동일 (delta 0.5Hz 시작, gamma 50Hz 캡). */
 export const EEG_BANDS: readonly BandRange[] = [
-  { key: "delta", fMin: 1, fMax: 4 },
+  { key: "delta", fMin: 0.5, fMax: 4 },
   { key: "theta", fMin: 4, fMax: 8 },
   { key: "alpha", fMin: 8, fMax: 13 },
   { key: "beta", fMin: 13, fMax: 30 },
-  { key: "gamma", fMin: 30, fMax: 45 },
+  { key: "gamma", fMin: 30, fMax: 50 },
 ];
 
 const MIN_SAMPLES = 64; // DFT 최소 입력 (frequency-only 임계값, fs 무관)
@@ -237,7 +237,7 @@ export function computeSpectrum(
 const BAND_SR = EEG_FS;
 const BAND_FILTER_TRANSIENT = EEG_FS; // 1초 transient
 const BAND_BANDPASS_LOW = 1;
-const BAND_BANDPASS_HIGH = 45;
+const BAND_BANDPASS_HIGH = 50;
 const BAND_BANDPASS_FC = (BAND_BANDPASS_LOW + BAND_BANDPASS_HIGH) / 2;
 const BP_NOTCH_COEFS = notchCoefs(BAND_SR, 60, calcLinkbandNotchQ(60, 2));
 const BP_BANDPASS_COEFS = bandpassCoefs(
@@ -322,15 +322,20 @@ export function computeBandPower(
   const filtered = batchFilter(batch);
   if (filtered.length < MIN_SAMPLES) return { linear: 0, db: 0 };
 
+  // 배포본 EEGSignalProcessor.computeBandPowers 와 동일 — band 안의 각 정수 Hz dB 값을
+  // **합산** (평균이 아님). 결과는 정수 Hz count 수만큼 더 큼.
+  // 배포본은 frequencies = [1..45] 로 spectrum 을 만든 후 band 별로 `freq >= min && freq < max`
+  // 조건으로 합산. 우리는 직접 iterate — 동일한 정수 Hz set 을 사용하기 위해
+  // `Math.ceil(fMin)..min(fMax-1, 45)` 로 (delta 0.5 → 1 부터, fMax exclusive).
+  const lo = Math.max(1, Math.ceil(fMin));
+  const hi = Math.min(45, Math.floor(fMax - 1e-9));
+  // fMax 가 정수면 deployed `< fMax` 와 동일하게 fMax-1 까지. fMax=4 → hi=3 (Math.floor(3.999...)=3).
   let dbSum = 0;
-  let count = 0;
-  for (let freq = fMin; freq <= fMax; freq++) {
+  for (let freq = lo; freq <= hi; freq++) {
     dbSum += morletPowerDb(filtered, freq);
-    count++;
   }
-  const avgDb = count > 0 ? dbSum / count : 0;
   // sensor-dashboard 와 동일 — linear 와 db 가 같은 값 (단순화). 차후 분리 가능.
-  return { linear: avgDb, db: avgDb };
+  return { linear: dbSum, db: dbSum };
 }
 
 export interface ComputedEegPower {
@@ -407,10 +412,8 @@ export function calculateEegSqi(filteredData: number[]): number[] {
     let varSum = 0;
     for (let j = i; j < i + EEG_SQI_WINDOW; j++) varSum += (filteredData[j] - mean) ** 2;
     const variance = varSum / EEG_SQI_WINDOW;
-    const freqScore = Math.max(
-      0,
-      Math.min(1, 1 - variance / (EEG_AMP_THRESHOLD * EEG_AMP_THRESHOLD)),
-    );
+    // 배포본 EEGSignalProcessor.calculateFrequencySQI — variance / 1000 scale (μV² 단위).
+    const freqScore = Math.max(0, Math.min(1, 1 - variance / 1000));
 
     for (let j = i; j < i + EEG_SQI_WINDOW && j < len; j++) {
       ampSqi[j] = ampAvg;
@@ -430,19 +433,19 @@ export function calculateEegSqi(filteredData: number[]): number[] {
 // 실 디바이스 비교 검증 필요 (사용자 향후 결정).
 
 export interface EegIndices {
-  /** Sum of all band linear powers, averaged over channels. */
+  /** Sum of all ch1 band powers (delta + theta + alpha + beta + gamma). */
   totalPower: number;
-  /** β / α (focused 상태). dB difference. */
+  /** β / (α + θ) — focused 상태. ch1 single-channel. */
   focusIndex: number;
-  /** α / β (relaxed 상태). dB difference. */
+  /** α / (α + β) — relaxed 상태 (배포본 정의). ch1 single-channel. */
   relaxationIndex: number;
-  /** (β+γ) − (α+θ) (스트레스 지표). dB. */
+  /** (β + γ) / (α + θ) — 스트레스 지표. ch1 single-channel. */
   stressIndex: number;
-  /** θ / α (인지 부하). dB difference. */
+  /** θ / α — 인지 부하. ch1 single-channel. */
   cognitiveLoad: number;
-  /** ch2_α − ch1_α (좌/우 비대칭). dB difference. */
+  /** (αL − αR) / (αL + αR) — 좌/우 비대칭. ch1=FP1=L, ch2=FP2=R. clamp[-1, 1]. */
   hemisphericBalance: number;
-  /** −|stressIndex| 의 normalize (덜 스트레스 = 더 안정). dB. */
+  /** (α + θ) / γ — 정서 안정성. ch1 single-channel. */
   emotionalStability: number;
 }
 
@@ -453,29 +456,34 @@ export const PPG_SAMPLE_RATE = 50;
 /** ~3s warm-up. 0.5Hz HP biquad τ ≈ 0.32s 라 settling 까지 3 time constants 필요. */
 export const PPG_TRANSIENT_SAMPLES = 150;
 
-const PPG_HP_COEFS = highpassCoefs(PPG_SAMPLE_RATE, 0.5, BUTTERWORTH_Q);
-const PPG_LP_COEFS = lowpassCoefs(PPG_SAMPLE_RATE, 5.0, BUTTERWORTH_Q);
+// 배포본 PPGSignalProcessor.applySimpleFilter — `makeBandpassFilter(1.0, 5.0, 50)` 단일 biquad.
+// linkband Yf.calcBandpassQ(fc=3, bw=2, n=1) → Q ≈ 0.559.
+const PPG_BANDPASS_LOW = 1.0;
+const PPG_BANDPASS_HIGH = 5.0;
+const PPG_BANDPASS_FC = (PPG_BANDPASS_LOW + PPG_BANDPASS_HIGH) / 2;
+const PPG_BP_COEFS = bandpassCoefs(
+  PPG_SAMPLE_RATE,
+  PPG_BANDPASS_FC,
+  calcLinkbandBandpassQ(PPG_BANDPASS_LOW, PPG_BANDPASS_HIGH),
+);
 
 export interface PpgChannelFilter {
-  hp: BiquadState;
-  lp: BiquadState;
+  bp: BiquadState;
   samplesProcessed: number;
 }
 
 export const createPpgChannelFilter = (): PpgChannelFilter => ({
-  hp: createBiquadState(),
-  lp: createBiquadState(),
+  bp: createBiquadState(),
   samplesProcessed: 0,
 });
 
 /**
- * PPG 단일 raw 샘플 → HP (0.5Hz) → LP (5Hz) cascade. 0.5-5Hz 가 심박 펄스 대역.
+ * PPG 단일 raw 샘플 → bandpass (1-5Hz) 단일 biquad. 1-5Hz 가 심박 펄스 대역.
  * `filter` 를 in-place 갱신. transient (`PPG_TRANSIENT_SAMPLES` 동안) 에선 0.
  */
 export function processPpgSample(filter: PpgChannelFilter, sample: number): number {
-  const h = processBiquad(PPG_HP_COEFS, filter.hp, sample);
-  const l = processBiquad(PPG_LP_COEFS, filter.lp, h);
-  const out = filter.samplesProcessed < PPG_TRANSIENT_SAMPLES ? 0 : l;
+  const y = processBiquad(PPG_BP_COEFS, filter.bp, sample);
+  const out = filter.samplesProcessed < PPG_TRANSIENT_SAMPLES ? 0 : y;
   filter.samplesProcessed++;
   return out;
 }
@@ -514,34 +522,86 @@ export function calculatePpgSqi(filteredData: number[]): number[] {
 }
 
 /**
- * 단순 PPG peak 검출 (own derivation — sensor-dashboard 프런트엔드에 없음, 서버 의존).
- * Threshold = signal max × 0.6, 직전 peak 와 최소 0.4초 (≤ 150 BPM 상한) 간격.
+ * 적응형 임계값 PPG peak 검출 — 배포본 PPGSignalProcessor.detectPeaksAdaptiveThreshold 동일.
  *
- * 반환: filtered 배열 안에서의 peak **인덱스** 배열. RR (sec) = `(peaks[i+1]-peaks[i])/fs`.
+ * - 0.5초 window (양쪽 fs*0.5) 의 local max/mean 으로 동적 threshold = mean + (max-mean)*0.6.
+ * - 5-point peak shape: data[i] > data[i±1] AND > data[i±2].
+ * - min peak distance = fs * 0.4 (= 150 BPM 상한).
+ *
+ * 길이 < 2*windowSize+1 (≈ 1초 @ fs) 이면 빈 배열. 반환은 인덱스 배열.
  */
 export function detectPpgPeaks(filtered: number[], fs: number): number[] {
   const peaks: number[] = [];
   const n = filtered.length;
-  if (n < 3) return peaks;
+  const windowSize = Math.floor(fs * 0.5); // 0.5s 한쪽 윈도우
+  const minPeakDistance = Math.floor(fs * 0.4); // 0.4s = 150 BPM 상한
+  if (n < 2 * windowSize + 1) return peaks;
 
-  // Adaptive threshold — signal 최대값의 60%.
-  let max = -Infinity;
-  for (const v of filtered) if (v > max) max = v;
-  if (max <= 0) return peaks; // 모든 값 ≤ 0 면 peak 없음 (DC 제거된 평탄 신호).
-  const threshold = max * 0.6;
+  for (let i = windowSize; i < n - windowSize; i++) {
+    // local window [i-windowSize, i+windowSize) — 배포본 slice 동일.
+    let localMax = -Infinity;
+    let localSum = 0;
+    const winLen = 2 * windowSize;
+    for (let j = i - windowSize; j < i + windowSize; j++) {
+      const v = filtered[j];
+      if (v > localMax) localMax = v;
+      localSum += v;
+    }
+    const localMean = localSum / winLen;
+    const threshold = localMean + (localMax - localMean) * 0.6;
 
-  const minInterval = Math.floor(fs * 0.4); // 0.4s = 150 BPM 상한
-  let lastPeak = -minInterval - 1;
-
-  for (let i = 1; i < n - 1; i++) {
     if (
       filtered[i] > threshold &&
       filtered[i] > filtered[i - 1] &&
-      filtered[i] >= filtered[i + 1] &&
-      i - lastPeak >= minInterval
+      filtered[i] > filtered[i + 1] &&
+      filtered[i] > filtered[i - 2] &&
+      filtered[i] > filtered[i + 2] &&
+      (peaks.length === 0 || i - peaks[peaks.length - 1] >= minPeakDistance)
     ) {
       peaks.push(i);
-      lastPeak = i;
+    }
+  }
+  return peaks;
+}
+
+/**
+ * HRV 전용 PPG peak 검출 — 배포본 PPGSignalProcessor.detectPeaksForHRV 동일.
+ *
+ * Raw IR 데이터 (필터 X) 직접 사용. mean 차감 후 max × 0.5 threshold,
+ * 3-point peak shape (i-1, i, i+1), min interval = fs * 0.4.
+ *
+ * 사용처: HRV/RR 계산 — view layer 가 raw IR 직접 전달.
+ */
+export function detectPpgPeaksForHrv(rawIr: number[], fs: number): number[] {
+  const peaks: number[] = [];
+  const n = rawIr.length;
+  if (n < 3) return peaks;
+
+  let mean = 0;
+  for (const v of rawIr) mean += v;
+  mean /= n;
+  // normalize (subtract mean) & find max for threshold
+  let max = -Infinity;
+  for (const v of rawIr) {
+    const norm = v - mean;
+    if (norm > max) max = norm;
+  }
+  if (max <= 0) return peaks;
+  const threshold = max * 0.5;
+
+  const minPeakDistance = Math.floor(fs * 0.4);
+
+  for (let i = 1; i < n - 1; i++) {
+    const a = rawIr[i - 1] - mean;
+    const b = rawIr[i] - mean;
+    const c = rawIr[i + 1] - mean;
+    if (
+      b > threshold &&
+      b > a &&
+      b > c &&
+      (peaks.length === 0 || i - peaks[peaks.length - 1] >= minPeakDistance)
+    ) {
+      peaks.push(i);
     }
   }
   return peaks;
@@ -626,6 +686,62 @@ export interface HeartRate {
   hrMin: number;
 }
 
+/**
+ * BPM with IQR outlier removal + linear-weighted mean + physiological validation.
+ * 배포본 PPGSignalProcessor 의 calculateRRIntervalsWithOutlierRemoval +
+ * calculateWeightedHeartRate + validateAndSmoothHeartRate 합본.
+ *
+ * 단계:
+ *  1. 생리학적 범위 [300, 1500] ms 필터링.
+ *  2. IQR 1.5× 통계적 outlier 제거 (sortedRR 의 q1/q3 인덱스 = floor(N*0.25), floor(N*0.75)).
+ *  3. 선형 가중 평균: 각 RR 의 instantaneous BPM (60000/rr) 에 weight (i+1)/N 가중.
+ *  4. 검증: BPM ∉ [40, 200] → 0 반환. CV > 0.5 → BPM × 0.9 (감쇠).
+ *  5. Math.round.
+ *
+ * `computeHeartRate` 와 별도 — 후자는 hrMax/hrMin 도 필요한 trend chart 용.
+ */
+export function computeHeartRateValidated(rrIntervalsMs: number[]): number {
+  // 1. 생리학적 범위 필터.
+  const valid = rrIntervalsMs.filter((rr) => rr >= 300 && rr <= 1500);
+  if (valid.length === 0) return 0;
+  if (valid.length === 1) {
+    const bpm = 60000 / valid[0];
+    if (bpm < 40 || bpm > 200) return 0;
+    return Math.round(bpm);
+  }
+
+  // 2. IQR 1.5× outlier 제거. 배포본 인덱스 산식 동일 (Math.floor 기반, exclusive 아님).
+  const sorted = [...valid].sort((a, b) => a - b);
+  const q1 = sorted[Math.floor(sorted.length * 0.25)];
+  const q3 = sorted[Math.floor(sorted.length * 0.75)];
+  const iqr = q3 - q1;
+  const lowerBound = q1 - 1.5 * iqr;
+  const upperBound = q3 + 1.5 * iqr;
+  const filtered = valid.filter((rr) => rr >= lowerBound && rr <= upperBound);
+  if (filtered.length === 0) return 0;
+
+  // 3. 선형 가중 평균.
+  let weightedSum = 0;
+  let totalWeight = 0;
+  for (let i = 0; i < filtered.length; i++) {
+    const weight = (i + 1) / filtered.length;
+    weightedSum += (60000 / filtered[i]) * weight;
+    totalWeight += weight;
+  }
+  const bpm = weightedSum / totalWeight;
+
+  // 4. 검증.
+  if (bpm < 40 || bpm > 200) return 0;
+  if (filtered.length >= 3) {
+    const meanRR = filtered.reduce((s, v) => s + v, 0) / filtered.length;
+    const varRR =
+      filtered.reduce((s, v) => s + (v - meanRR) ** 2, 0) / filtered.length;
+    const cv = Math.sqrt(varRR) / meanRR;
+    if (cv > 0.5) return Math.round(bpm * 0.9);
+  }
+  return Math.round(bpm);
+}
+
 /** RR ms 배열 → 평균/최대/최소 BPM. 빈 배열이면 모두 0. */
 export function computeHeartRate(rrIntervalsMs: number[]): HeartRate {
   if (rrIntervalsMs.length === 0) return { bpm: 0, hrMax: 0, hrMin: 0 };
@@ -647,27 +763,46 @@ export function computeHeartRate(rrIntervalsMs: number[]): HeartRate {
   };
 }
 
-/** Band power → 7 EEG analysis indices. spectrum 결과를 spectrum-based 비율로 변환. */
+/**
+ * Band power → 7 EEG analysis indices (배포본 EEGSignalProcessor 동일).
+ *
+ * 배포본은 ch1 (single channel) band power 만으로 대부분의 index 를 계산.
+ * hemisphericBalance 만 ch1/ch2 alpha 양쪽 사용.
+ *
+ * 모든 0-나누기 가드 — 분모 ≤ 0 이면 0 반환. hemisphericBalance 는 분모 < 0.001 일 때
+ * 한쪽이 우세하면 ±1, 그 외 0 (배포본 동일). 결과는 [-1, 1] 로 clamp.
+ */
 export function computeEegIndices(power: ComputedEegPower): EegIndices {
   const b = power.bands;
-  const ch1Avg = (key: BandRange["key"]) => b[key].ch1Db;
-  const ch2Avg = (key: BandRange["key"]) => b[key].ch2Db;
-  const avg = (key: BandRange["key"]) => (ch1Avg(key) + ch2Avg(key)) / 2;
+  const ch1Delta = b.delta.ch1Db;
+  const ch1Theta = b.theta.ch1Db;
+  const ch1Alpha = b.alpha.ch1Db;
+  const ch1Beta = b.beta.ch1Db;
+  const ch1Gamma = b.gamma.ch1Db;
+  const ch2Alpha = b.alpha.ch2Db;
 
-  const alpha = avg("alpha");
-  const beta = avg("beta");
-  const theta = avg("theta");
-  const gamma = avg("gamma");
+  const safeRatio = (num: number, den: number): number => (den > 0 ? num / den : 0);
 
-  const focusIndex = beta - alpha;
-  const relaxationIndex = alpha - beta;
-  const stressIndex = (beta + gamma) / 2 - (alpha + theta) / 2;
-  const cognitiveLoad = theta - alpha;
-  const hemisphericBalance = ch2Avg("alpha") - ch1Avg("alpha");
-  const emotionalStability = -Math.abs(stressIndex);
+  const focusIndex = safeRatio(ch1Beta, ch1Alpha + ch1Theta);
+  const relaxationIndex = safeRatio(ch1Alpha, ch1Alpha + ch1Beta);
+  const stressIndex = safeRatio(ch1Beta + ch1Gamma, ch1Alpha + ch1Theta);
+  const cognitiveLoad = safeRatio(ch1Theta, ch1Alpha);
+  const emotionalStability = safeRatio(ch1Alpha + ch1Theta, ch1Gamma);
+
+  // hemisphericBalance — 배포본 동일: ch1=L (FP1), ch2=R (FP2).
+  const alphaSum = ch1Alpha + ch2Alpha;
+  let hemisphericBalance = 0;
+  if (alphaSum > 0.001) {
+    hemisphericBalance = (ch1Alpha - ch2Alpha) / alphaSum;
+  } else if (ch1Alpha > 0 || ch2Alpha > 0) {
+    hemisphericBalance = ch1Alpha > ch2Alpha ? 1 : -1;
+  }
+  hemisphericBalance = Math.max(-1, Math.min(1, hemisphericBalance));
+
+  const totalPower = ch1Delta + ch1Theta + ch1Alpha + ch1Beta + ch1Gamma;
 
   return {
-    totalPower: power.totalPowerLinear,
+    totalPower,
     focusIndex,
     relaxationIndex,
     stressIndex,

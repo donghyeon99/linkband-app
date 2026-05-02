@@ -14,7 +14,7 @@
  *     view.onBatch(accBatch)
  *     view.dispose()
  */
-import { ACC_FS, type AccBatch } from "../linkband/models";
+import { ACC_FS, ACC_LSB_PER_G, type AccBatch } from "../linkband/models";
 import {
   type ChartHandle,
   buildMultiLineOption,
@@ -182,29 +182,31 @@ export function createAccView(container: HTMLElement): AccViewHandle {
         { name: "Y", color: chartColors.accY },
         { name: "Z", color: chartColors.accZ },
       ],
-      yName: "ADC counts",
-      yNameGap: 50,
+      yName: "g",
+      yMin: -2,
+      yMax: 2,
+      yNameGap: 40,
       tooltipFormatter: (params: unknown) => {
         const arr = params as Array<{ seriesName: string; value: [number, number] }>;
         if (!Array.isArray(arr) || arr.length === 0) return "";
         const t = arr[0]?.value?.[0] ?? 0;
         const lines = [`t = ${t.toFixed(2)}s`];
-        for (const p of arr) lines.push(`${p.seriesName}: ${p.value[1]}`);
+        for (const p of arr) lines.push(`${p.seriesName}: ${p.value[1].toFixed(3)} g`);
         return lines.join("<br/>");
       },
     }),
   );
 
-  // Magnitude — 0..30000 고정 (1g LSB 16384 기준 여유). area + smooth (sensor-dashboard
-  // AccMagnitudeChart 와 동일).
+  // Magnitude — g 단위 (정지 시 ≈ 1g, 이동 시 그 이상). 0..3g 윈도우 — 운동 시
+  // 일시적 spike 가 ±2g 를 벗어날 수 있어 여유 두고 3.
   const magChart: ChartHandle = createChart(
     magHost,
     buildRealtimeLineOption({
       color: chartColors.magnitude,
-      yName: "magnitude",
+      yName: "g",
       yMin: 0,
-      yMax: 30000,
-      yNameGap: 55,
+      yMax: 3,
+      yNameGap: 40,
       area: true,
       smooth: true,
       tooltipFormatter: (params: unknown) => {
@@ -212,7 +214,7 @@ export function createAccView(container: HTMLElement): AccViewHandle {
         if (!Array.isArray(arr) || arr.length === 0) return "";
         const t = arr[0]?.value?.[0] ?? 0;
         const v = arr[0]?.value?.[1] ?? 0;
-        return `t = ${t.toFixed(2)}s<br/>magnitude: ${v.toFixed(0)}`;
+        return `t = ${t.toFixed(2)}s<br/>magnitude: ${v.toFixed(3)} g`;
       },
     }),
   );
@@ -230,11 +232,12 @@ export function createAccView(container: HTMLElement): AccViewHandle {
 
   return {
     onBatch(batch: AccBatch): void {
-      // x/y/z 버퍼 + per-sample magnitude 계산 (DSP 가 아닌 산술).
+      // raw int16 → g 변환 (1g = ACC_LSB_PER_G LSB, spec §9). per-sample magnitude
+      // 도 g 단위로 누적 — 정지 시 magnitude ≈ 1g (중력 벡터).
       for (let i = 0; i < batch.x.length; i++) {
-        const x = batch.x[i];
-        const y = batch.y[i];
-        const z = batch.z[i];
+        const x = batch.x[i] / ACC_LSB_PER_G;
+        const y = batch.y[i] / ACC_LSB_PER_G;
+        const z = batch.z[i] / ACC_LSB_PER_G;
         pushAndTrim(xBuf, x);
         pushAndTrim(yBuf, y);
         pushAndTrim(zBuf, z);

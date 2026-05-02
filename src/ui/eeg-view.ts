@@ -29,13 +29,15 @@ import {
   processEegSample,
 } from "../linkband/dsp";
 import { EEG_FS, type EegBatch } from "../linkband/models";
+import { eegIndexThresholds } from "../linkband/thresholds";
+import { createBandPowerCard, type BandPowerCardHandle } from "./band-power-card";
 import {
   type ChartHandle,
   buildMultiLineOption,
   buildRealtimeLineOption,
   createChart,
 } from "./chart";
-import { createMetricCard, type MetricCardHandle } from "./metric-card";
+import { createEegIndexCard, type EegIndexCardHandle } from "./eeg-index-card";
 import { axisLabelStyle, chartColors, splitLineStyle, uiColors } from "./theme";
 
 const EEG_BUFFER_SIZE = 2000; // ~4s @ 500Hz
@@ -195,8 +197,8 @@ function buildSpectrumChart(host: HTMLElement): ChartHandle {
         { name: "Ch2", color: chartColors.ch2Filtered, smooth: true },
       ],
       yName: "dB",
-      yMin: -40,
-      yMax: 60,
+      yMin: 0,
+      yMax: 85,
       yNameGap: 40,
       tooltipFormatter: (params: unknown) => {
         const arr = params as Array<{ seriesName: string; value: [number, number] }>;
@@ -208,18 +210,52 @@ function buildSpectrumChart(host: HTMLElement): ChartHandle {
       },
     }),
   );
-  // x-axis 를 시간 (s) → 주파수 (Hz) 로 override.
+  // x-axis 를 시간 (s) → 주파수 (Hz) 로 override. 0.5 ~ 50Hz (delta 시작 ~ gamma 끝).
   handle.chart.setOption({
     xAxis: {
       type: "value",
       name: "Hz",
       nameLocation: "middle",
       nameGap: 25,
-      min: 1,
-      max: 45,
+      min: 0.5,
+      max: 50,
       axisLabel: { ...axisLabelStyle, formatter: (v: number) => `${v}` },
       splitLine: splitLineStyle,
     },
+  });
+  // sdk_PowerSpectrumChart.tsx 처럼 5 band 별 markArea overlay.
+  // markArea 는 series 안에 들어가야 — 첫 series (Ch1) 에 부착.
+  handle.chart.setOption({
+    series: [
+      {
+        markArea: {
+          silent: true,
+          itemStyle: { opacity: 0.08 },
+          data: [
+            [
+              { name: "Delta", xAxis: 0.5, itemStyle: { color: "#8B4513" } },
+              { xAxis: 4 },
+            ],
+            [
+              { name: "Theta", xAxis: 4, itemStyle: { color: "#FF8C00" } },
+              { xAxis: 8 },
+            ],
+            [
+              { name: "Alpha", xAxis: 8, itemStyle: { color: "#32CD32" } },
+              { xAxis: 13 },
+            ],
+            [
+              { name: "Beta", xAxis: 13, itemStyle: { color: "#1E90FF" } },
+              { xAxis: 30 },
+            ],
+            [
+              { name: "Gamma", xAxis: 30, itemStyle: { color: "#9400D3" } },
+              { xAxis: 50 },
+            ],
+          ],
+        },
+      },
+    ],
   });
   return handle;
 }
@@ -253,6 +289,7 @@ export function createEegView(container: HTMLElement): EegViewHandle {
     "🔧 Ch2 Filtered EEG Signal (FP2)",
     "Channel 2 (FP2) — 60Hz notch + 1-45Hz bandpass filter (DSP active).",
   );
+  // (필터 cutoff 자체는 dsp.ts 가 갱신; 여기 라벨은 사용자에게 보이는 기존 표현 유지.)
   row1.appendChild(ch1.card);
   row1.appendChild(ch2.card);
   root.appendChild(row1);
@@ -289,7 +326,7 @@ export function createEegView(container: HTMLElement): EegViewHandle {
   const row3 = document.createElement("div");
   row3.className = "eeg-grid-2col";
   const spectrumCard = makeCard();
-  spectrumCard.appendChild(makeCardTitle("🌈 Power Spectrum (1-45Hz)"));
+  spectrumCard.appendChild(makeCardTitle("🌈 Power Spectrum (0.5-50Hz)"));
   spectrumCard.appendChild(
     makeCardDesc("Ch1, Ch2 frequency-domain EEG signal analysis (DFT, DC-removed)."),
   );
@@ -334,6 +371,9 @@ export function createEegView(container: HTMLElement): EegViewHandle {
   const spectrumChart = buildSpectrumChart(spectrumHost);
 
   // ─── Band power + Indices cards ─────────────────────────────────────────
+  // sdk.linkband 배포본 + sensor-dashboard `IndexCards.tsx` 미러.
+  // band 색깔은 Power Spectrum markArea 와 일치 (delta=brown, theta=orange,
+  // alpha=green, beta=blue, gamma=purple).
   const BAND_COLORS: Record<(typeof EEG_BANDS)[number]["key"], string> = {
     delta: "#8B4513",
     theta: "#FF8C00",
@@ -341,22 +381,61 @@ export function createEegView(container: HTMLElement): EegViewHandle {
     beta: "#1E90FF",
     gamma: "#9400D3",
   };
-  const bandCards: Record<(typeof EEG_BANDS)[number]["key"], MetricCardHandle> = {
-    delta: createMetricCard(bandGrid, { label: "Delta (1-4Hz)", unit: "dB", dotColor: BAND_COLORS.delta, decimals: 1 }),
-    theta: createMetricCard(bandGrid, { label: "Theta (4-8Hz)", unit: "dB", dotColor: BAND_COLORS.theta, decimals: 1 }),
-    alpha: createMetricCard(bandGrid, { label: "Alpha (8-13Hz)", unit: "dB", dotColor: BAND_COLORS.alpha, decimals: 1 }),
-    beta: createMetricCard(bandGrid, { label: "Beta (13-30Hz)", unit: "dB", dotColor: BAND_COLORS.beta, decimals: 1 }),
-    gamma: createMetricCard(bandGrid, { label: "Gamma (30-45Hz)", unit: "dB", dotColor: BAND_COLORS.gamma, decimals: 1 }),
+  // sensor-dashboard `BandPowerCards.tsx` 의 BAND_META 미러 (range/desc).
+  const BAND_META: Record<
+    (typeof EEG_BANDS)[number]["key"],
+    { name: string; range: string; description: string }
+  > = {
+    delta: { name: "Delta", range: "0.5-4Hz", description: "Deep sleep" },
+    theta: { name: "Theta", range: "4-8Hz", description: "Drowsy/meditation" },
+    alpha: { name: "Alpha", range: "8-13Hz", description: "Relaxed/calm" },
+    beta: { name: "Beta", range: "13-30Hz", description: "Focused/thinking" },
+    gamma: { name: "Gamma", range: "30-50Hz", description: "High cognition" },
+  };
+  const bandCards: Record<(typeof EEG_BANDS)[number]["key"], BandPowerCardHandle> = {
+    delta: createBandPowerCard(bandGrid, {
+      bandName: BAND_META.delta.name,
+      freqRange: BAND_META.delta.range,
+      color: BAND_COLORS.delta,
+      description: BAND_META.delta.description,
+    }),
+    theta: createBandPowerCard(bandGrid, {
+      bandName: BAND_META.theta.name,
+      freqRange: BAND_META.theta.range,
+      color: BAND_COLORS.theta,
+      description: BAND_META.theta.description,
+    }),
+    alpha: createBandPowerCard(bandGrid, {
+      bandName: BAND_META.alpha.name,
+      freqRange: BAND_META.alpha.range,
+      color: BAND_COLORS.alpha,
+      description: BAND_META.alpha.description,
+    }),
+    beta: createBandPowerCard(bandGrid, {
+      bandName: BAND_META.beta.name,
+      freqRange: BAND_META.beta.range,
+      color: BAND_COLORS.beta,
+      description: BAND_META.beta.description,
+    }),
+    gamma: createBandPowerCard(bandGrid, {
+      bandName: BAND_META.gamma.name,
+      freqRange: BAND_META.gamma.range,
+      color: BAND_COLORS.gamma,
+      description: BAND_META.gamma.description,
+    }),
   };
 
-  const indexCards = {
-    focusIndex: createMetricCard(idxGrid, { label: "Focus", unit: "dB", dotColor: "#3b82f6", decimals: 2 }),
-    relaxationIndex: createMetricCard(idxGrid, { label: "Relaxation", unit: "dB", dotColor: "#10b981", decimals: 2 }),
-    stressIndex: createMetricCard(idxGrid, { label: "Stress", unit: "dB", dotColor: "#ef4444", decimals: 2 }),
-    cognitiveLoad: createMetricCard(idxGrid, { label: "Cognitive Load", unit: "dB", dotColor: "#a855f7", decimals: 2 }),
-    hemisphericBalance: createMetricCard(idxGrid, { label: "Hemispheric Bal.", unit: "dB", dotColor: "#f59e0b", decimals: 2 }),
-    emotionalStability: createMetricCard(idxGrid, { label: "Emotional Stab.", unit: "dB", dotColor: "#14b8a6", decimals: 2 }),
-    totalPower: createMetricCard(idxGrid, { label: "Total Power", unit: "dB", dotColor: "#6b6b7e", decimals: 1 }),
+  // 7 EEG Analysis Indices — 풍부한 카드 + 호버 tooltip. 표시 순서는
+  // sensor-dashboard `IndexCards.tsx` 와 동일 (relax/emotional/focus/stress 1행,
+  // total/cognitive/hemispheric 2행).
+  const indexCards: Record<string, EegIndexCardHandle> = {
+    relaxationIndex: createEegIndexCard(idxGrid, { threshold: eegIndexThresholds.relaxationIndex }),
+    emotionalStability: createEegIndexCard(idxGrid, { threshold: eegIndexThresholds.emotionalStability }),
+    focusIndex: createEegIndexCard(idxGrid, { threshold: eegIndexThresholds.focusIndex }),
+    stressIndex: createEegIndexCard(idxGrid, { threshold: eegIndexThresholds.stressIndex }),
+    totalPower: createEegIndexCard(idxGrid, { threshold: eegIndexThresholds.totalPower }),
+    cognitiveLoad: createEegIndexCard(idxGrid, { threshold: eegIndexThresholds.cognitiveLoad }),
+    hemisphericBalance: createEegIndexCard(idxGrid, { threshold: eegIndexThresholds.hemisphericBalance }),
   };
 
   // ─── State (filter + buffers) ────────────────────────────────────────────
@@ -454,10 +533,11 @@ export function createEegView(container: HTMLElement): EegViewHandle {
         });
       }
 
-      // Power spectrum: 매 5 batches (250ms). DFT 호출당 ~45k ops × 2 ch (가벼우나 그래도 throttle).
+      // Power spectrum: 매 5 batches (250ms). DFT 호출당 ~50k ops × 2 ch (가벼우나 그래도 throttle).
+      // 주파수 범위 1~50Hz — 차트 markArea 와 일치 (gamma 30-50 까지 커버).
       if (batchCount % SPECTRUM_INTERVAL === 0) {
-        const ch1Spec = computeSpectrum(ch1RawBuf, fs, 1, 45);
-        const ch2Spec = computeSpectrum(ch2RawBuf, fs, 1, 45);
+        const ch1Spec = computeSpectrum(ch1RawBuf, fs, 1, 50);
+        const ch2Spec = computeSpectrum(ch2RawBuf, fs, 1, 50);
         if (ch1Spec.length > 0 || ch2Spec.length > 0) {
           spectrumChart.chart.setOption({
             series: [{ data: ch1Spec }, { data: ch2Spec }],
@@ -470,9 +550,21 @@ export function createEegView(container: HTMLElement): EegViewHandle {
       if (batchCount % POWER_INTERVAL === 0) {
         const power = computeEegPower(ch1RawBuf, ch2RawBuf, fs);
         if (power) {
+          // sensor-dashboard `BandPowerCards.tsx:64-66` 와 동일한 cross-band 정규화:
+          // 모든 band 의 ch1/ch2 max 를 잡아 카드들 간 상대 비교 가능하게.
+          let maxPower = 0;
           for (const band of EEG_BANDS) {
-            const avg = (power.bands[band.key].ch1Db + power.bands[band.key].ch2Db) / 2;
-            bandCards[band.key].update(avg);
+            const b = power.bands[band.key];
+            if (b.ch1Db > maxPower) maxPower = b.ch1Db;
+            if (b.ch2Db > maxPower) maxPower = b.ch2Db;
+          }
+          for (const band of EEG_BANDS) {
+            const b = power.bands[band.key];
+            bandCards[band.key].update({
+              ch1Db: b.ch1Db,
+              ch2Db: b.ch2Db,
+              maxPower,
+            });
           }
           const idx = computeEegIndices(power);
           indexCards.focusIndex.update(idx.focusIndex);

@@ -49,6 +49,93 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 (저녁) — DSP 산식 / 시각화 / ACC 단위 정정 [FIX] [PROGRESS]
+
+**무엇을**: 같은 날 [VERIFIED] entry (sdk.linkband.store 전 영역 비교, 3 agents 병렬) 에서
+나온 정정 우선순위 1–10 을 일괄 반영. 코드 / 시각화 / 단위 변환 세 카테고리.
+배포 비교 표는 위 [VERIFIED] entry 참조.
+
+#### DSP 산식 정정 (`src/linkband/dsp.ts`)
+
+- `computeEegIndices` (L775-) — dB-difference → 배포 동일 ratio:
+  - `focusIndex = β/(α+θ)`, `relaxationIndex = α/(α+β)`,
+    `stressIndex = (β+γ)/(α+θ)`, `cognitiveLoad = θ/α`,
+    `hemisphericBalance = (αL−αR)/(αL+αR)` clamped [-1,1],
+    `emotionalStability = (α+θ)/γ`, `totalPower = Σ ch1 bands`.
+  - 대부분 ch1 단일 채널 (배포 convention), `hemisphericBalance` 만 양 채널.
+- `computeBandPower` (L313-) — band 안 dB 집계 mean → **sum** (배포 동일).
+- `EEG_BANDS` (L173-) — delta `1→0.5`, gamma `45→50`. `BAND_BANDPASS_HIGH 45→50` (L240).
+- `calculateEegSqi` (L390-) — freq variance scale `22500→1000` (이전 22.5× 관대).
+- PPG filter — HP(0.5)+LP(5.0) cascade → **bandpass(1.0, 5.0)** 단일.
+  `PpgChannelFilter` 형태 `{hp, lp}` → `{bp}` (L470-).
+- `detectPpgPeaks` (L533-) — global `max·0.6` + 3-pt → **local 0.5s adaptive +
+  5-pt shape** (drift baseline robust).
+- 신규 `computeHeartRateValidated` (L703-) — IQR 1.5× + linear-weighted 평균 +
+  [40, 200] BPM 게이트 + CV>0.5 시 0.9 감쇠 + round.
+- 신규 `detectPpgPeaksForHrv` (L575-) — raw IR 전용 detector (LF/HF 보존 목적,
+  배포 `detectPeaksForHRV` 와 동일 의도).
+
+#### 시각화 upgrade (rich card + tooltip)
+
+- 신규 `src/linkband/thresholds.ts` (442 줄) — sensor-dashboard `indexThresholds.ts`
+  포팅. Tailwind 클래스 → 직접 hex 색상.
+- 신규 `src/ui/eeg-index-card.ts` (274 줄) — EEG-index rich card. dot 색 by threshold,
+  값/단위/상태 메시지/sample count + hover tooltip.
+- 신규 `src/ui/band-power-card.ts` — band-power 카드. **sensor-dashboard
+  `BandPowerCards.tsx` 구조 그대로**:
+  - 상단 row: 색 dot + "dB" 라벨
+  - **Total** 큰 vertical bar (h≈32px) — bottom-up fill, overlay text 로 combined dB
+  - **Ch1 (파랑) / Ch2 (빨강)** 작은 vertical bar 각각 (band color 가 아닌 채널
+    고정색) — 헤더 row 에 채널명 + 숫자
+  - 카드 하단: band 이름 + "범위·desc" (예: `8-13Hz · Relaxed/calm`) + L/R diff (cyan)
+  - 정규화: **cross-band global maxPower** (per-card 가 아님) — sensor-dashboard
+    L64-66 와 동일. 호출 측이 모든 band 의 ch1/ch2 max 를 계산해서 update 인자로
+    전달.
+- `src/ui/eeg-view.ts` —
+  - Power Spectrum: y `-40..60 → 0..85`, x `1..45 → 0.5..50`,
+    Δ/θ/α/β/γ markArea overlay 추가 (L226-).
+  - 7 EEG indices → `createEegIndexCard` (L423-).
+  - 5 band powers → `createBandPowerCard` (L392-) + cross-band maxPower 정규화 wiring
+    (L548-559). `BAND_META` (이름/범위/설명) sensor-dashboard 와 동일.
+
+#### ACC 단위 정정 (raw int16 → g)
+
+- `src/linkband/models.ts` — `ACC_LSB_PER_G = 16384` 상수 추가 (L33, spec §9 line 300-301
+  "16-bit LE ±2g 모드에서 약 16384 LSB/g"). parser 출력은 raw int16 유지 (Bundle 1
+  §13 잠금: ACC dtype int16 보존).
+- `src/ui/acc-view.ts` — view layer 에서 X/Y/Z/magnitude 모두 `/ ACC_LSB_PER_G` (L237-240).
+  yName "ADC counts" → "g". yMin/yMax: waveform [-2, 2] g, magnitude [0, 3] g.
+  Tooltip 표시 `value.toFixed(3) g` (L194, L217).
+
+#### 검증
+
+- `tsc --noEmit` clean.
+- `npm run test:run` **53 → 67 GREEN**. `tests/dsp.test.ts` 의 EEG_BANDS / SQI /
+  band power / PPG filter / peak detection 테스트가 새 동작에 맞춰 갱신됨.
+  추가: `computeHeartRateValidated` 7 tests, `detectPpgPeaksForHrv` 4 tests.
+
+#### 가드레일
+
+- spec / parser.ts / models.ts 에서 parser 출력 형태 변경 0 (ACC raw int16 잠금 유지).
+- 새 dependency 0. 새 폴더 0.
+
+#### 다음 단계
+
+- ACC 분석 메트릭 (Stability / Intensity placeholder cards) — sensor-dashboard
+  컴포넌트에 존재. 차후 포팅 검토.
+- PPG view 와이어링: `detectPpgPeaksForHrv` / `computeHeartRateValidated` 는
+  현재 export 만 되어 있고 `src/ui/ppg-view.ts` 에서 호출 안 함. 다음 청크에서
+  RR ms 계산 흐름과 BPM 카드를 새 함수로 교체.
+
+**참조**:
+- 직전 [VERIFIED] entry (2026-05-02): 정정 우선순위 1–10 표.
+- 수정 파일: `src/linkband/dsp.ts`, `src/linkband/models.ts`, `src/ui/eeg-view.ts`,
+  `src/ui/acc-view.ts`, `tests/dsp.test.ts`.
+- 신규 파일: `src/linkband/thresholds.ts`, `src/ui/eeg-index-card.ts`,
+  `src/ui/band-power-card.ts`.
+
+---
+
 ### 2026-05-02 — sdk.linkband.store 전 영역 비교 (3 agents 병렬) [VERIFIED]
 
 **무엇을**: 사용자 지적("결과가 다르다") 후속 — 배포 빌드 source map 에서 visualization 컴포넌트 10개 추가 추출 + 3 agent 병렬 dispatch (PPG DSP / EEG DSP / Visualization). 직전 [VERIFIED] entry 보다 한 단계 깊은 비교.

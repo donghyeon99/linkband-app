@@ -9,49 +9,65 @@ to the browser. No backend server.
 
 ## Status
 
-WIP. Protocol spec is locked in `docs/01-protocol-spec.md` based on reverse-engineering
-the official [SDK-Android](https://github.com/LooxidLabs/SDK-Android) (Kotlin) and
-[link_band_sdk](https://github.com/LooxidLabs/link_band_sdk) (Python+Electron) repos,
-plus on-device verification (see `docs/02-progress-log.md`).
+- Protocol spec is locked in `docs/01-protocol-spec.md` based on reverse-engineering
+  the official [SDK-Android](https://github.com/LooxidLabs/SDK-Android) (Kotlin) and
+  [link_band_sdk](https://github.com/LooxidLabs/link_band_sdk) (Python+Electron) repos,
+  plus on-device verification.
+- TypeScript implementation is in: BLE GATT scan/connect, packet parser
+  (15 parser tests + 67 DSP tests, all GREEN), DSP (EEG filter cascade, PPG
+  bandpass, EEG/PPG SQI, FFT spectrum, Morlet wavelet band power, EEG indices,
+  HRV/HR with IQR+weighted+gated BPM), and visualization (EEG / PPG / ACC views
+  with rich threshold-aware cards and hover tooltips matching the
+  [sdk.linkband.store](https://sdk.linkband.store) reference).
+- Numerical results reconciled against the deployed reference on 2026-05-02 — see
+  `docs/02-progress-log.md` 의 `[FIX] [PROGRESS]` entry (DSP 산식 / 시각화 / ACC
+  단위 정정).
+- Deployable as a Vercel static SPA. Web Bluetooth requires Chromium (Chrome /
+  Edge), HTTPS or localhost, and a user gesture (button click) to call
+  `requestDevice()`.
 
-The first milestone — scan / connect / per-sensor packet count — is implemented in
-`src/main.ts`. Parser and visualization are next.
+For implementation history and decision log, see `docs/02-progress-log.md`.
 
 ## Architecture
 
 ```
-[Link Band headband] ──BLE (Web Bluetooth API)──> [Browser TS app]
-                                                  · scan / connect / GATT
-                                                  · packet parse
-                                                  · DSP filters
-                                                  · metrics (BPM, HRV, band power)
-                                                  · React/Canvas visualization
+[Link Band headband] ──BLE (Web Bluetooth)──> [Browser TS app]
+                                              · GATT scan / connect
+                                              · packet parse (parser.ts)
+                                              · DSP (filters, SQI, spectrum, indices)
+                                              · ECharts visualization
+                                              · Real-time WS-style update loop
 ```
 
-Web Bluetooth requires Chromium (Chrome or Edge), HTTPS or localhost, and a user
-gesture (button click) to call `requestDevice()`. Vercel auto-provisions HTTPS so
-production is fine.
+UI is vanilla TypeScript + ECharts (no React). Charts are throttled by frame
+counter — filtered traces tick every batch (50 ms), heavy DSP (band power /
+indices / Morlet wavelet) every 10 batches (500 ms) — to keep the main thread
+responsive.
 
 ## Repo layout
 
 ```
 linkband-app/
 ├── docs/                     ← spec + progress log (language-agnostic)
-├── src/                      ← TypeScript source (primary)
-├── tests/                    ← TS tests (vitest, future)
+├── src/
+│   ├── linkband/             ← models.ts, parser.ts, dsp.ts, thresholds.ts
+│   ├── ui/                   ← eeg-view, ppg-view, acc-view, chart, *-card
+│   └── main.ts
+├── tests/                    ← vitest (parser + DSP)
 ├── package.json              ← TS deps (Vite + TS strict)
 ├── tsconfig.json
 ├── vite.config.ts
 ├── index.html
-└── reference-py/             ← Python reference implementation
+└── reference-py/             ← Python reference implementation (frozen)
     ├── pyproject.toml        ← Python deps (uv)
     ├── linkband/             ← models.py, parser.py, spike_dump.py
     └── tests/                ← pytest + spike dump fixtures
 ```
 
-The Python implementation under `reference-py/` is the canonical numerical reference
-against which the TS parser is validated. It is frozen at commit `be16261` (15/15
-parser tests GREEN); ongoing development happens in TypeScript at the repo root.
+The Python implementation under `reference-py/` is the canonical numerical
+reference against which the TS parser is validated. It is frozen at commit
+`be16261` (15/15 parser tests GREEN); ongoing development happens in TypeScript
+at the repo root.
 
 ## Setup
 
@@ -59,8 +75,9 @@ parser tests GREEN); ongoing development happens in TypeScript at the repo root.
 
 ```bash
 npm install
-npm run dev    # vite dev server (Chromium browser)
-npm run build  # production build → dist/
+npm run dev        # vite dev server (Chromium browser)
+npm run build      # production build → dist/
+npm run test:run   # vitest (parser + DSP suites)
 ```
 
 ### Python reference (validation only)
@@ -68,8 +85,8 @@ npm run build  # production build → dist/
 ```bash
 cd reference-py
 uv sync
-uv run pytest         # parser test suite
-uv run python -m linkband.spike_dump   # 30s BLE dump (needs device)
+uv run pytest                            # parser test suite
+uv run python -m linkband.spike_dump     # 30s BLE dump (needs device)
 ```
 
 ## License
