@@ -20,8 +20,8 @@ to the browser. No backend server.
   with rich threshold-aware cards and hover tooltips matching the
   [sdk.linkband.store](https://sdk.linkband.store) reference).
 - Numerical results reconciled against the deployed reference on 2026-05-02 — see
-  `docs/02-progress-log.md` 의 `[FIX] [PROGRESS]` entry (DSP 산식 / 시각화 / ACC
-  단위 정정).
+  the `[FIX] [PROGRESS]` entry in `docs/02-progress-log.md` (DSP formulas /
+  visualization / ACC unit fix).
 - Deployable as a Vercel static SPA. Web Bluetooth requires Chromium (Chrome /
   Edge), HTTPS or localhost, and a user gesture (button click) to call
   `requestDevice()`.

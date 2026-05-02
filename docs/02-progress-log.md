@@ -49,6 +49,35 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-02 (저녁) — Power Spectrum 크기·범위 + index.html/README 영문화 [FIX]
+
+**무엇을**: 직전 커밋 (`6d0dbf3`) 후속 사용자 지적 두 건.
+
+1. **Power Spectrum 차트 크기/범위 부정합**
+   - 차트 host 220px 가 markArea 5밴드 + legend + dual series 와 함께 압축됨.
+     배포본 `sdk_PowerSpectrumChart.tsx` 는 `h-80` (= 320px) + `minHeight: 320`.
+   - xAxis 가 우리 `0.5..50` (band power 계산 범위) 였지만 배포본은 `1..45` 만
+     표시 — 차트 가독성이 핵심이라 deployed 그대로 매칭. EEG_BANDS 자체는 0.5..50
+     유지 (band power 계산용).
+   - markArea 가 series 안 하나에 부착돼 있어 ECharts 렌더링이 가장자리 일부에서
+     누락됨. 배포본 정확 동일 5밴드 (`1-4`/`4-8`/`8-13`/`13-30`/`30-45`)
+     `rgba(color, 0.10)` overlay 로 재구성.
+   - 배포본의 area-gradient (Ch1 blue 30%→10%, Ch2 red 30%→10%) 추가.
+   - `buildSpectrumChart` (eeg-view.ts:191-) 직접 ECharts option 구성 — 기존
+     `buildMultiLineOption` wrapper 가 area gradient/markArea 미지원이라.
+   - 카드 제목 `🌈 Power Spectrum (1-45Hz)` (이전 0.5-50Hz).
+
+2. **한글 텍스트 영문화**
+   - `index.html:43` "Chromium (Chrome / Edge) 전용..." →
+     "Chromium-only (Chrome / Edge). Requires HTTPS or localhost. Replay is dev-only."
+   - `README.md:22-24` 직전 entry 를 가리키는 한글 한 줄 → 영문화.
+
+**검증**: `tsc --noEmit` clean (unused `buildMultiLineOption` import 정리), 67/67 tests GREEN.
+
+**참조**: 수정 파일 `src/ui/eeg-view.ts`, `index.html`, `README.md`, 본 진행 로그.
+
+---
+
 ### 2026-05-02 (저녁) — DSP 산식 / 시각화 / ACC 단위 정정 [FIX] [PROGRESS]
 
 **무엇을**: 같은 날 [VERIFIED] entry (sdk.linkband.store 전 영역 비교, 3 agents 병렬) 에서

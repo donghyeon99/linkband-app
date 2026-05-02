@@ -33,7 +33,7 @@ import { eegIndexThresholds } from "../linkband/thresholds";
 import { createBandPowerCard, type BandPowerCardHandle } from "./band-power-card";
 import {
   type ChartHandle,
-  buildMultiLineOption,
+  type EChartsOption,
   buildRealtimeLineOption,
   createChart,
 } from "./chart";
@@ -188,76 +188,120 @@ function buildSqiChart(host: HTMLElement, label: string): ChartHandle {
   );
 }
 
+/**
+ * Power Spectrum chart — 배포본 `sdk_PowerSpectrumChart.tsx` 와 같은 시각 스펙.
+ *
+ * - height 320px (배포본 `h-80` Tailwind 동일), grid 10/10/15/15.
+ * - xAxis 1..45 Hz, yAxis 0..85 dB (deployed 정확). Band power 계산 자체는 0.5..50
+ *   까지 보지만 차트 표시는 1-45 구간만 — overlay 가독성 + 가장자리 잡음 회피.
+ * - 양 series area-gradient (Ch1 blue 30%→10%, Ch2 red 30%→10%).
+ * - 5 band markArea overlay (rgba 0.10) — 첫 series 에 부착.
+ */
 function buildSpectrumChart(host: HTMLElement): ChartHandle {
-  const handle = createChart(
-    host,
-    buildMultiLineOption({
-      series: [
-        { name: "Ch1", color: chartColors.ch1Filtered, smooth: true },
-        { name: "Ch2", color: chartColors.ch2Filtered, smooth: true },
-      ],
-      yName: "dB",
-      yMin: 0,
-      yMax: 85,
-      yNameGap: 40,
-      tooltipFormatter: (params: unknown) => {
+  const ch1Color = chartColors.ch1Filtered;
+  const ch2Color = chartColors.ch2Filtered;
+  // 배포본 series 색 (#3b82f6 blue, #ef4444 red) 의 RGB triplet — gradient 정의용.
+  const ch1Rgb = "59, 130, 246";
+  const ch2Rgb = "239, 68, 68";
+  const areaGrad = (rgb: string) => ({
+    type: "linear" as const,
+    x: 0,
+    y: 0,
+    x2: 0,
+    y2: 1,
+    colorStops: [
+      { offset: 0, color: `rgba(${rgb}, 0.3)` },
+      { offset: 1, color: `rgba(${rgb}, 0.1)` },
+    ],
+  });
+
+  const option = {
+    tooltip: {
+      trigger: "axis",
+      formatter: (params: unknown) => {
         const arr = params as Array<{ seriesName: string; value: [number, number] }>;
         if (!Array.isArray(arr) || arr.length === 0) return "";
         const f = arr[0]?.value?.[0] ?? 0;
-        const lines = [`${f}Hz`];
+        const lines = [`${f.toFixed(0)} Hz`];
         for (const p of arr) lines.push(`${p.seriesName}: ${p.value[1].toFixed(1)} dB`);
         return lines.join("<br/>");
       },
-    }),
-  );
-  // x-axis 를 시간 (s) → 주파수 (Hz) 로 override. 0.5 ~ 50Hz (delta 시작 ~ gamma 끝).
-  handle.chart.setOption({
+    },
+    legend: {
+      data: ["Ch1", "Ch2"],
+      top: 8,
+      textStyle: { color: "#cbd5e1", fontSize: 11 },
+    },
+    grid: { left: "10%", right: "10%", bottom: "15%", top: "15%" },
     xAxis: {
       type: "value",
       name: "Hz",
       nameLocation: "middle",
-      nameGap: 25,
-      min: 0.5,
-      max: 50,
+      nameGap: 28,
+      min: 1,
+      max: 45,
       axisLabel: { ...axisLabelStyle, formatter: (v: number) => `${v}` },
       splitLine: splitLineStyle,
     },
-  });
-  // sdk_PowerSpectrumChart.tsx 처럼 5 band 별 markArea overlay.
-  // markArea 는 series 안에 들어가야 — 첫 series (Ch1) 에 부착.
-  handle.chart.setOption({
+    yAxis: {
+      type: "value",
+      name: "dB",
+      nameLocation: "middle",
+      nameGap: 50,
+      min: 0,
+      max: 85,
+      axisLabel: { ...axisLabelStyle, formatter: (v: number) => `${v.toFixed(0)}` },
+      splitLine: splitLineStyle,
+    },
     series: [
       {
+        name: "Ch1",
+        type: "line",
+        data: [],
+        lineStyle: { color: ch1Color, width: 2 },
+        areaStyle: { color: areaGrad(ch1Rgb) },
+        symbol: "none",
+        animation: false,
+        smooth: true,
         markArea: {
           silent: true,
-          itemStyle: { opacity: 0.08 },
           data: [
             [
-              { name: "Delta", xAxis: 0.5, itemStyle: { color: "#8B4513" } },
+              { name: "Delta", xAxis: 1, itemStyle: { color: "rgba(139, 69, 19, 0.10)" } },
               { xAxis: 4 },
             ],
             [
-              { name: "Theta", xAxis: 4, itemStyle: { color: "#FF8C00" } },
+              { name: "Theta", xAxis: 4, itemStyle: { color: "rgba(255, 140, 0, 0.10)" } },
               { xAxis: 8 },
             ],
             [
-              { name: "Alpha", xAxis: 8, itemStyle: { color: "#32CD32" } },
+              { name: "Alpha", xAxis: 8, itemStyle: { color: "rgba(50, 205, 50, 0.10)" } },
               { xAxis: 13 },
             ],
             [
-              { name: "Beta", xAxis: 13, itemStyle: { color: "#1E90FF" } },
+              { name: "Beta", xAxis: 13, itemStyle: { color: "rgba(30, 144, 255, 0.10)" } },
               { xAxis: 30 },
             ],
             [
-              { name: "Gamma", xAxis: 30, itemStyle: { color: "#9400D3" } },
-              { xAxis: 50 },
+              { name: "Gamma", xAxis: 30, itemStyle: { color: "rgba(148, 0, 211, 0.10)" } },
+              { xAxis: 45 },
             ],
           ],
         },
       },
+      {
+        name: "Ch2",
+        type: "line",
+        data: [],
+        lineStyle: { color: ch2Color, width: 2 },
+        areaStyle: { color: areaGrad(ch2Rgb) },
+        symbol: "none",
+        animation: false,
+        smooth: true,
+      },
     ],
-  });
-  return handle;
+  };
+  return createChart(host, option as unknown as EChartsOption);
 }
 
 // ─── createEegView ─────────────────────────────────────────────────────────
@@ -326,12 +370,13 @@ export function createEegView(container: HTMLElement): EegViewHandle {
   const row3 = document.createElement("div");
   row3.className = "eeg-grid-2col";
   const spectrumCard = makeCard();
-  spectrumCard.appendChild(makeCardTitle("🌈 Power Spectrum (0.5-50Hz)"));
+  spectrumCard.appendChild(makeCardTitle("🌈 Power Spectrum (1-45Hz)"));
   spectrumCard.appendChild(
     makeCardDesc("Ch1, Ch2 frequency-domain EEG signal analysis (DFT, DC-removed)."),
   );
   const spectrumHost = document.createElement("div");
-  spectrumHost.style.cssText = "width: 100%; height: 220px;";
+  // 배포본 `h-80` (= 320px) 매칭 — 220px 는 markArea 5밴드 overlay 와 함께 너무 압축.
+  spectrumHost.style.cssText = "width: 100%; height: 320px; min-height: 320px;";
   spectrumCard.appendChild(spectrumHost);
   row3.appendChild(spectrumCard);
 
@@ -536,8 +581,10 @@ export function createEegView(container: HTMLElement): EegViewHandle {
       // Power spectrum: 매 5 batches (250ms). DFT 호출당 ~50k ops × 2 ch (가벼우나 그래도 throttle).
       // 주파수 범위 1~50Hz — 차트 markArea 와 일치 (gamma 30-50 까지 커버).
       if (batchCount % SPECTRUM_INTERVAL === 0) {
-        const ch1Spec = computeSpectrum(ch1RawBuf, fs, 1, 50);
-        const ch2Spec = computeSpectrum(ch2RawBuf, fs, 1, 50);
+        // 차트 표시 범위 (1..45) 와 동일하게 — band power 계산은 dsp.ts 가
+        // EEG_BANDS 정의대로 0.5..50 을 별도 사용. 차트 line 은 1..45 만.
+        const ch1Spec = computeSpectrum(ch1RawBuf, fs, 1, 45);
+        const ch2Spec = computeSpectrum(ch2RawBuf, fs, 1, 45);
         if (ch1Spec.length > 0 || ch2Spec.length > 0) {
           spectrumChart.chart.setOption({
             series: [{ data: ch1Spec }, { data: ch2Spec }],
