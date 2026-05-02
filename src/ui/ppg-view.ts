@@ -25,7 +25,9 @@ import {
   computeHeartRate,
   computeHeartRateValidated,
   computeHrvMetrics,
+  computeLfHf,
   computePpgStressIndex,
+  computeSpO2,
   createPpgChannelFilter,
   detectPpgPeaks,
   detectPpgPeaksForHrv,
@@ -329,6 +331,7 @@ export function createPpgView(container: HTMLElement): PpgViewHandle {
   const redBuf: number[] = []; // filtered Red (chart 입력)
   const rawIrBuf: number[] = []; // raw IR (HRV 검출 — LF/HF 0.04-0.4Hz 보존, bandpass 가
                                   // 1Hz 이하 차단해버리므로 raw 가 필요).
+  const rawRedBuf: number[] = []; // raw Red (SpO₂ Beer-Lambert R = redAC·irDC / irAC·redDC).
   const sqiBuf: number[] = []; // PPG SQI %
   const bpmHistoryBuf: number[] = []; // BPM trend (one entry per valid batch)
 
@@ -351,6 +354,7 @@ export function createPpgView(container: HTMLElement): PpgViewHandle {
         pushAndTrim(irBuf, fi, PPG_BUFFER_SIZE);
         pushAndTrim(redBuf, fr, PPG_BUFFER_SIZE);
         pushAndTrim(rawIrBuf, batch.ir[i], PPG_BUFFER_SIZE);
+        pushAndTrim(rawRedBuf, batch.red[i], PPG_BUFFER_SIZE);
       }
 
       const fs = batch.fs;
@@ -404,6 +408,13 @@ export function createPpgView(container: HTMLElement): PpgViewHandle {
         m.pnn20.update(hrv.pnn20);
         // PPG Stress Index — RR ≥ 5 일 때 의미 있는 0..1 정규화 값.
         m.ppgStressIndex.update(computePpgStressIndex(hrvRrMs));
+
+        // LF / HF / LF·HF — Welch periodogram 기반 (4Hz resample, ms²).
+        // RR ≥ 5 이상 일 때 의미. 산출 실패 (PSD 부족) 시 0 → 카드 "No data".
+        const lfHf = computeLfHf(hrvRrMs);
+        m.lfPower.update(lfHf.lfPower > 0 ? lfHf.lfPower : null);
+        m.hfPower.update(lfHf.hfPower > 0 ? lfHf.hfPower : null);
+        m.lfHfRatio.update(lfHf.lfHfRatio > 0 ? lfHf.lfHfRatio : null);
       }
 
       // BPM trend chart — validated BPM 가 0 이면 skip (잡음 시 trend 흔들림 방지).
@@ -420,9 +431,10 @@ export function createPpgView(container: HTMLElement): PpgViewHandle {
           series: [{ data: bpmData }],
         });
       }
-      // Placeholder cards — DSP 미구현 (spo2 / ppgStressIndex / lfPower /
-      // hfPower / lfHfRatio). null 유지하면 카드는 "No data" 로 표시되고,
-      // hover 시 산식 / 정상 범위 / 해석 tooltip 은 정상 노출.
+      // SpO₂ — raw red/IR Beer-Lambert. 신호 품질 부족 시 0 → "No data".
+      const spo2 = computeSpO2(rawRedBuf, rawIrBuf);
+      m.spo2.update(spo2 > 0 ? spo2 : null);
+      // 모든 placeholder 활성화됨 — 14 카드 전부 DSP wired.
     },
     resize(): void {
       filteredChart.chart.resize();

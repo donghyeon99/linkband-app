@@ -781,6 +781,376 @@ export function computePpgStressIndex(rrIntervalsMs: number[]): number {
   return Math.max(0, Math.min(1, stressIndex));
 }
 
+// ─── HRV frequency-domain (LF / HF / LF·HF ratio via Welch periodogram) ──
+//
+// 배포본 `sdk_PPGSignalProcessor.ts:1429-1692` 정확 동일.
+// HRV literature 표준:
+//   - RR (ms) 시계열은 비균일 시간 sample → 4Hz 로 linear interpolation 재샘플.
+//   - Welch periodogram (Hamming window, 50% overlap, FFT) 으로 PSD 계산.
+//   - LF (0.04-0.15Hz, 교감신경 활성도) / HF (0.15-0.4Hz, 부교감) 대역 power
+//     적분 (사다리꼴 규칙).
+//   - LF/HF ratio: 자율신경 균형 — 낮으면 휴식, 높으면 스트레스.
+//
+// scipy.signal.welch 와 알고리즘 동일 (양쪽 spectrum 합치기 위해 DC/Nyquist 제외
+// 한 bin 은 ×2). FFT 는 radix-2 in-place bit-reversal — 2의 거듭제곱 입력만 허용.
+
+const HRV_RESAMPLE_FS = 4; // 4Hz — HRV LF/HF 분석 표준 (Nyquist 2Hz > HF 상한 0.4Hz).
+const HRV_LF_LOW = 0.04;
+const HRV_LF_HIGH = 0.15;
+const HRV_HF_LOW = 0.15;
+const HRV_HF_HIGH = 0.4;
+const WELCH_MIN_WINDOW = 8;
+const WELCH_MAX_WINDOW = 64;
+
+export interface LfHfResult {
+  /** LF (0.04-0.15Hz) band 적분 power, ms². */
+  lfPower: number;
+  /** HF (0.15-0.4Hz) band 적분 power, ms². */
+  hfPower: number;
+  /** LF/HF 비율 (HF=0 면 0). */
+  lfHfRatio: number;
+}
+
+/** 2의 거듭제곱 중 n 이상 가장 작은 값. n ≤ 1 → 1. */
+function nextPowerOfTwo(n: number): number {
+  let p = 1;
+  while (p < n) p *= 2;
+  return p;
+}
+
+/** Hamming window (size). w[i] = 0.54 − 0.46·cos(2πi/(size−1)). */
+function hammingWindow(size: number): number[] {
+  if (size === 1) return [1];
+  const w = new Array<number>(size);
+  for (let i = 0; i < size; i++) {
+    w[i] = 0.54 - 0.46 * Math.cos((2 * Math.PI * i) / (size - 1));
+  }
+  return w;
+}
+
+/**
+ * Radix-2 in-place FFT — input 길이는 2의 거듭제곱. real 입력 → complex 출력
+ * (interleaved [re0, im0, re1, im1, ...]). Cooley-Tukey, decimation-in-time.
+ */
+function performFft(data: number[]): number[] {
+  const n = data.length;
+  if (n <= 1) return data.slice();
+  if ((n & (n - 1)) !== 0) {
+    throw new Error("FFT input length must be a power of 2");
+  }
+  // Init complex array — 2N entries, im=0 initially.
+  const c = new Array<number>(n * 2);
+  for (let i = 0; i < n; i++) {
+    c[2 * i] = data[i];
+    c[2 * i + 1] = 0;
+  }
+  // Bit-reversal permutation.
+  let j = 0;
+  for (let i = 1; i < n; i++) {
+    let bit = n >> 1;
+    while (j & bit) {
+      j ^= bit;
+      bit >>= 1;
+    }
+    j ^= bit;
+    if (i < j) {
+      [c[2 * i], c[2 * j]] = [c[2 * j], c[2 * i]];
+      [c[2 * i + 1], c[2 * j + 1]] = [c[2 * j + 1], c[2 * i + 1]];
+    }
+  }
+  // Butterfly.
+  let length = 2;
+  while (length <= n) {
+    const angle = (-2 * Math.PI) / length;
+    const wReal = Math.cos(angle);
+    const wImag = Math.sin(angle);
+    for (let i = 0; i < n; i += length) {
+      let wr = 1;
+      let wi = 0;
+      for (let k = 0; k < length / 2; k++) {
+        const ur = c[2 * (i + k)];
+        const ui = c[2 * (i + k) + 1];
+        const vr =
+          c[2 * (i + k + length / 2)] * wr - c[2 * (i + k + length / 2) + 1] * wi;
+        const vi =
+          c[2 * (i + k + length / 2)] * wi + c[2 * (i + k + length / 2) + 1] * wr;
+        c[2 * (i + k)] = ur + vr;
+        c[2 * (i + k) + 1] = ui + vi;
+        c[2 * (i + k + length / 2)] = ur - vr;
+        c[2 * (i + k + length / 2) + 1] = ui - vi;
+        const tmpWr = wr * wReal - wi * wImag;
+        wi = wr * wImag + wi * wReal;
+        wr = tmpWr;
+      }
+    }
+    length *= 2;
+  }
+  return c;
+}
+
+export interface PsdResult {
+  frequencies: number[];
+  psd: number[];
+}
+
+/**
+ * Welch periodogram — Hamming window + 50% overlap, FFT-based PSD.
+ * scipy.signal.welch 와 동일 양식 (one-sided spectrum, DC/Nyquist 외 ×2).
+ *
+ * window size 는 데이터 길이의 절반 (clamp [WELCH_MIN_WINDOW, WELCH_MAX_WINDOW]).
+ * nfft = nextPowerOfTwo(window). 데이터가 너무 짧으면 빈 PSD 반환.
+ */
+export function welchPeriodogram(data: number[], samplingRate: number): PsdResult {
+  if (data.length < WELCH_MIN_WINDOW) return { frequencies: [], psd: [] };
+  const windowSize = Math.max(
+    WELCH_MIN_WINDOW,
+    Math.min(WELCH_MAX_WINDOW, Math.floor(data.length / 2)),
+  );
+  const overlap = Math.floor(windowSize / 2);
+  const nfft = nextPowerOfTwo(windowSize);
+
+  // Frequency bins (one-sided, 0..nfft/2).
+  const freqs: number[] = new Array(nfft / 2 + 1);
+  for (let i = 0; i <= nfft / 2; i++) {
+    freqs[i] = (i * samplingRate) / nfft;
+  }
+
+  const win = hammingWindow(windowSize);
+  const segmentPSDs: number[][] = [];
+
+  let start = 0;
+  while (start + windowSize <= data.length) {
+    // Window + zero-pad.
+    const padded = new Array<number>(nfft).fill(0);
+    for (let i = 0; i < windowSize; i++) {
+      padded[i] = data[start + i] * win[i];
+    }
+    const fft = performFft(padded);
+    // One-sided PSD.
+    const seg: number[] = new Array(nfft / 2 + 1);
+    for (let i = 0; i <= nfft / 2; i++) {
+      const re = fft[2 * i] || 0;
+      const im = fft[2 * i + 1] || 0;
+      let p = (re * re + im * im) / (samplingRate * windowSize);
+      // DC/Nyquist 외에는 양쪽 spectrum 합치기 위해 ×2.
+      if (i > 0 && i < nfft / 2) p *= 2;
+      seg[i] = p;
+    }
+    segmentPSDs.push(seg);
+    start += windowSize - overlap;
+  }
+  if (segmentPSDs.length === 0) return { frequencies: freqs, psd: new Array(freqs.length).fill(0) };
+
+  // 평균.
+  const psd = new Array<number>(freqs.length).fill(0);
+  for (const seg of segmentPSDs) {
+    for (let i = 0; i < seg.length; i++) psd[i] += seg[i];
+  }
+  for (let i = 0; i < psd.length; i++) psd[i] /= segmentPSDs.length;
+  return { frequencies: freqs, psd };
+}
+
+/** PSD 의 [lowF, highF] 대역을 trapezoidal 적분. freqs 가 비어 있으면 0. */
+function integratePsdBand(
+  freqs: number[],
+  psd: number[],
+  lowF: number,
+  highF: number,
+): number {
+  if (freqs.length < 2) return 0;
+  const df = freqs[1] - freqs[0];
+  let sum = 0;
+  for (let i = 0; i < freqs.length; i++) {
+    const f = freqs[i];
+    if (f >= lowF && f <= highF) sum += psd[i];
+  }
+  return sum * df;
+}
+
+/**
+ * RR (ms) 비균일 시계열 → targetFs (Hz) 균일 sample 로 linear interpolation 재샘플.
+ * RR < 2 또는 totalTime × targetFs < 4 이면 빈 배열.
+ *
+ * 시간축: t[0]=0, t[i+1]=t[i]+rrSec[i] (RR 자체가 i 와 i+1 peak 사이 간격).
+ */
+function resampleRrLinear(rrMs: number[], targetFs: number): number[] {
+  if (rrMs.length < 2) return [];
+  const rrSec = rrMs.map((r) => r / 1000);
+  // 누적 시간축. length = N+1 (peak 시점들).
+  const t: number[] = new Array(rrSec.length + 1);
+  t[0] = 0;
+  for (let i = 0; i < rrSec.length; i++) t[i + 1] = t[i] + rrSec[i];
+  const total = t[t.length - 1];
+  const num = Math.floor(total * targetFs);
+  if (num < 4) return [];
+  // 보간 — RR 값을 [t[0], t[N]] 에 mapping. y[0]=rrSec[0], y[i+1]=rrSec[i] (구간 i).
+  // 배포본은 yOriginal=rrSec 이지만 t 는 N+1 길이라 mismatch — 첫 t 점을 첫 RR 값과
+  // 매칭하는 식. 같은 효과로 yOriginal 을 [rrSec[0], rrSec[0], rrSec[1], ..., rrSec[N-1]]
+  // 처럼 prepend 해서 길이 맞춰도 동일. 단순화를 위해 stepwise 가까이로 보간:
+  //   x ∈ [t[i], t[i+1]] 면 y = rrSec[i] (interval i 의 값).
+  const out = new Array<number>(num);
+  for (let k = 0; k < num; k++) {
+    const x = k / targetFs;
+    if (x >= total) {
+      out[k] = rrSec[rrSec.length - 1];
+      continue;
+    }
+    // i: x ∈ [t[i], t[i+1]).
+    let i = 0;
+    while (i < t.length - 1 && t[i + 1] <= x) i++;
+    if (i >= rrSec.length) i = rrSec.length - 1;
+    const x1 = t[i];
+    const x2 = t[i + 1];
+    const y1 = i === 0 ? rrSec[0] : rrSec[i - 1];
+    const y2 = rrSec[i];
+    out[k] = y1 + ((y2 - y1) * (x - x1)) / (x2 - x1);
+  }
+  return out;
+}
+
+/**
+ * RR ms 배열 → LF/HF/LF·HF ratio. RR < 5 이거나 PSD 산출 불가 시 모두 0.
+ *
+ * 표준 HRV literature: 4Hz 재샘플 → Welch (Hamming/50% overlap) PSD →
+ * LF [0.04, 0.15] / HF [0.15, 0.4] 대역 적분. unit = ms² (RR 단위 ms 의 제곱).
+ */
+export function computeLfHf(rrIntervalsMs: number[]): LfHfResult {
+  if (rrIntervalsMs.length < 5) return { lfPower: 0, hfPower: 0, lfHfRatio: 0 };
+  const resampled = resampleRrLinear(rrIntervalsMs, HRV_RESAMPLE_FS);
+  if (resampled.length < WELCH_MIN_WINDOW) return { lfPower: 0, hfPower: 0, lfHfRatio: 0 };
+  // ms² 단위로 — sec² 결과에 1e6 곱.
+  const { frequencies, psd } = welchPeriodogram(resampled, HRV_RESAMPLE_FS);
+  if (frequencies.length === 0) return { lfPower: 0, hfPower: 0, lfHfRatio: 0 };
+  const lfSec2 = integratePsdBand(frequencies, psd, HRV_LF_LOW, HRV_LF_HIGH);
+  const hfSec2 = integratePsdBand(frequencies, psd, HRV_HF_LOW, HRV_HF_HIGH);
+  const lfPower = lfSec2 * 1e6;
+  const hfPower = hfSec2 * 1e6;
+  const lfHfRatio = hfPower > 0 ? lfPower / hfPower : 0;
+  return { lfPower, hfPower, lfHfRatio };
+}
+
+// ─── SpO₂ (Beer-Lambert AC/DC ratio + R 값 piecewise) ───────────────────
+//
+// 배포본 `sdk_PPGSignalProcessor.ts:1007-1083` 정확 동일.
+// Beer-Lambert 법칙: 동맥혈 산소포화도가 red 와 IR LED 흡수 비율을 결정.
+//   1. 양 채널의 AC (pulsatile) / DC (DC offset) 성분을 분리.
+//   2. R = (redAC/redDC) / (irAC/irDC).
+//   3. R → SpO₂ 비선형 보정 공식 (R 구간별 선형/근사식).
+//   4. 신호 품질 (redStd 와 irStd 비율) 이 낮으면 보수적 95% 쪽으로 수렴.
+//   5. [85, 100] 범위 clamp + round.
+//
+// ⚠ 의료 등급 pulse oximeter 가 아님 — 학습/관찰용. 신호 품질 부족 (std<10) 시 0.
+
+const SPO2_MIN_VARIANCE_STD = 10;
+const SPO2_SMOOTHING_WINDOW = 3;
+
+/** 단순 mean — DC component. */
+function meanOf(data: number[]): number {
+  if (data.length === 0) return 0;
+  let s = 0;
+  for (const v of data) s += v;
+  return s / data.length;
+}
+
+/** mean-centered population std. variance check 용. */
+function stdOf(data: number[]): number {
+  if (data.length === 0) return 0;
+  const m = meanOf(data);
+  let sq = 0;
+  for (const v of data) sq += (v - m) ** 2;
+  return Math.sqrt(sq / data.length);
+}
+
+/** 단순 moving average (window = SPO2_SMOOTHING_WINDOW). edge clamp. */
+function smoothMa(data: number[], window: number): number[] {
+  if (window <= 1) return data.slice();
+  const half = Math.floor(window / 2);
+  const out: number[] = new Array(data.length);
+  for (let i = 0; i < data.length; i++) {
+    const a = Math.max(0, i - half);
+    const b = Math.min(data.length - 1, i + half);
+    let s = 0;
+    for (let j = a; j <= b; j++) s += data[j];
+    out[i] = s / (b - a + 1);
+  }
+  return out;
+}
+
+/**
+ * Pulsatile (AC) component — 평균 peak − 평균 valley. peak/valley 미검출 시 range
+ * 폴백. data 길이 < 10 면 0.
+ */
+function pulsatileComponent(data: number[]): number {
+  if (data.length < 10) return 0;
+  const sm = smoothMa(data, SPO2_SMOOTHING_WINDOW);
+  const peaks: number[] = [];
+  const valleys: number[] = [];
+  for (let i = 1; i < sm.length - 1; i++) {
+    if (sm[i] > sm[i - 1] && sm[i] > sm[i + 1]) peaks.push(sm[i]);
+    if (sm[i] < sm[i - 1] && sm[i] < sm[i + 1]) valleys.push(sm[i]);
+  }
+  if (peaks.length === 0 || valleys.length === 0) {
+    let mn = Infinity;
+    let mx = -Infinity;
+    for (const v of sm) {
+      if (v < mn) mn = v;
+      if (v > mx) mx = v;
+    }
+    return mx - mn;
+  }
+  const avgPeak = peaks.reduce((s, v) => s + v, 0) / peaks.length;
+  const avgValley = valleys.reduce((s, v) => s + v, 0) / valleys.length;
+  return Math.abs(avgPeak - avgValley);
+}
+
+/**
+ * Raw red / IR PPG → SpO₂ %. 길이 mismatch / 신호 부족 / R 계산 실패 시 0.
+ *
+ * 배포본 piecewise:
+ *   R < 0.5         → 100
+ *   0.5 ≤ R < 0.7   → 104 − 17·R
+ *   0.7 ≤ R < 1.0   → 112 − 25·R
+ *   1.0 ≤ R < 2.0   → 120 − 35·R
+ *   R ≥ 2.0         → max(70, 100 − 15·R)
+ *
+ * 신호 품질 부족 (min/max std 비율 < 0.5) 시 95% 로 수렴 (배포본 동일).
+ * 최종 [85, 100] clamp + round.
+ */
+export function computeSpO2(redRaw: number[], irRaw: number[]): number {
+  if (redRaw.length === 0 || irRaw.length === 0) return 0;
+  if (redRaw.length !== irRaw.length) return 0;
+
+  const redStd = stdOf(redRaw);
+  const irStd = stdOf(irRaw);
+  if (redStd < SPO2_MIN_VARIANCE_STD || irStd < SPO2_MIN_VARIANCE_STD) return 0;
+
+  const redAC = pulsatileComponent(redRaw);
+  const irAC = pulsatileComponent(irRaw);
+  const redDC = meanOf(redRaw);
+  const irDC = meanOf(irRaw);
+  if (redDC === 0 || irDC === 0 || redAC === 0 || irAC === 0) return 0;
+
+  const redRatio = redAC / redDC;
+  const irRatio = irAC / irDC;
+  if (irRatio === 0) return 0;
+  const R = redRatio / irRatio;
+
+  let spo2: number;
+  if (R < 0.5) spo2 = 100;
+  else if (R < 0.7) spo2 = 104 - 17 * R;
+  else if (R < 1.0) spo2 = 112 - 25 * R;
+  else if (R < 2.0) spo2 = 120 - 35 * R;
+  else spo2 = Math.max(70, 100 - 15 * R);
+
+  // 신호 품질 (양 채널 std 비율) 낮으면 95 쪽으로 수렴 — 배포본 동일.
+  const qualityFactor = Math.min(redStd, irStd) / Math.max(redStd, irStd);
+  if (qualityFactor < 0.5) {
+    spo2 = spo2 * 0.95 + 95 * 0.05;
+  }
+
+  return Math.round(Math.max(85, Math.min(100, spo2)));
+}
+
 // ─── ACC analysis (movement intensity / postural stability) ──────────────
 //
 // **Note**: sensor-dashboard 는 ACC analysis 를 SSE backend 로부터 받아 store

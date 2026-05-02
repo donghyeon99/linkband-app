@@ -16,7 +16,10 @@ import {
   PPG_TRANSIENT_SAMPLES,
   calculateEegSqi,
   computeAccAnalysis,
+  computeLfHf,
   computePpgStressIndex,
+  computeSpO2,
+  welchPeriodogram,
   computeHeartRate,
   computeHeartRateValidated,
   computeHrvMetrics,
@@ -506,6 +509,139 @@ describe("computePpgStressIndex (배포본 0.4·SDNN + 0.4·RMSSD + 0.2·HR 가�
     const v2 = computePpgStressIndex([2000, 2000, 2000, 2000, 2000]);
     expect(v2).toBeGreaterThanOrEqual(0);
     expect(v2).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("welchPeriodogram (Hamming + 50% overlap + FFT)", () => {
+  function sineWave(freq: number, fs: number, len: number): number[] {
+    const out = new Array<number>(len);
+    for (let i = 0; i < len; i++) out[i] = Math.sin((2 * Math.PI * freq * i) / fs);
+    return out;
+  }
+
+  it("입력 < 8 → 빈 결과", () => {
+    expect(welchPeriodogram([1, 2, 3], 4)).toEqual({ frequencies: [], psd: [] });
+  });
+
+  it("0.2 Hz sine @ 4 Hz fs (256 samples) → PSD peak 가 0.2 Hz 근처", () => {
+    const data = sineWave(0.2, 4, 256);
+    const { frequencies, psd } = welchPeriodogram(data, 4);
+    expect(frequencies.length).toBeGreaterThan(0);
+    let peakIdx = 0;
+    for (let i = 1; i < psd.length; i++) if (psd[i] > psd[peakIdx]) peakIdx = i;
+    const peakFreq = frequencies[peakIdx];
+    expect(peakFreq).toBeGreaterThan(0.05);
+    expect(peakFreq).toBeLessThan(0.4);
+  });
+
+  it("DC 신호 (모두 1.0) → bin 0 에 power, 나머지 ~0", () => {
+    const data = new Array(64).fill(1.0);
+    const { frequencies, psd } = welchPeriodogram(data, 4);
+    expect(frequencies[0]).toBe(0);
+    expect(psd[0]).toBeGreaterThan(0);
+    for (let i = 1; i < psd.length; i++) expect(psd[i]).toBeLessThan(psd[0]);
+  });
+});
+
+describe("computeLfHf (4Hz resample + Welch PSD + LF/HF 적분)", () => {
+  it("RR < 5 → 모두 0", () => {
+    expect(computeLfHf([800, 800, 800])).toEqual({
+      lfPower: 0,
+      hfPower: 0,
+      lfHfRatio: 0,
+    });
+  });
+
+  it("균일 RR (변동성 0) → DC 신호 — 모든 PSD 결과는 finite 값", () => {
+    // 균일 RR 은 상수 시계열 → 강한 DC + Hamming window leakage 로 LF 영역에
+    // 일부 power 새어나옴. 실제 HRV 해석에서 "균일 RR" 자체가 비정상이라 결과
+    // 의 절댓값보다 finite 한지 + LF >> HF (DC 가 LF 쪽으로 leakage) 인지가
+    // 의미 있음.
+    const rr = new Array(60).fill(800);
+    const { lfPower, hfPower, lfHfRatio } = computeLfHf(rr);
+    expect(Number.isFinite(lfPower)).toBe(true);
+    expect(Number.isFinite(hfPower)).toBe(true);
+    expect(Number.isFinite(lfHfRatio)).toBe(true);
+    // DC leakage 는 저주파 LF 쪽에 집중 → LF > HF.
+    expect(lfPower).toBeGreaterThanOrEqual(hfPower);
+  });
+
+  it("천천히 변동하는 RR (LF 영역 변동) → LF > HF", () => {
+    // 0.1Hz 변동 RR — LF (0.04-0.15Hz) 안. RR 시퀀스 자체를 0.1Hz sine 으로.
+    const rr: number[] = [];
+    for (let i = 0; i < 100; i++) {
+      // 실 시간 t = sum(prev RR)/1000. 단순화: t 는 i (sample index ≈ time scale).
+      // 정확한 변동 시뮬은 복잡하므로 0.1Hz "느린 변화" 를 인덱스 기반으로 근사.
+      rr.push(800 + 100 * Math.sin((2 * Math.PI * 0.1 * i) / 4));
+    }
+    const { lfPower, hfPower } = computeLfHf(rr);
+    expect(lfPower).toBeGreaterThan(0);
+    // 0.1Hz 는 LF band 안, HF band (0.15-0.4Hz) 외 → LF > HF 이어야 함.
+    if (lfPower > 0 && hfPower > 0) expect(lfPower).toBeGreaterThan(hfPower);
+  });
+
+  it("결과 모두 finite 하고 음수 아님", () => {
+    const rr: number[] = [];
+    for (let i = 0; i < 80; i++) rr.push(700 + Math.random() * 300);
+    const r = computeLfHf(rr);
+    expect(Number.isFinite(r.lfPower)).toBe(true);
+    expect(Number.isFinite(r.hfPower)).toBe(true);
+    expect(Number.isFinite(r.lfHfRatio)).toBe(true);
+    expect(r.lfPower).toBeGreaterThanOrEqual(0);
+    expect(r.hfPower).toBeGreaterThanOrEqual(0);
+    expect(r.lfHfRatio).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("computeSpO2 (Beer-Lambert R 값 piecewise)", () => {
+  // helper: synthetic PPG-like signal (DC + AC pulse).
+  function synthPpg(dc: number, ac: number, len: number, hzPerSample = 0.02): number[] {
+    const out: number[] = new Array(len);
+    for (let i = 0; i < len; i++) {
+      out[i] = dc + ac * Math.sin(2 * Math.PI * hzPerSample * i);
+    }
+    return out;
+  }
+
+  it("길이 mismatch / 빈 배열 → 0", () => {
+    expect(computeSpO2([], [])).toBe(0);
+    expect(computeSpO2([1, 2, 3], [1, 2])).toBe(0);
+  });
+
+  it("std < 10 (변동성 거의 없음) → 0", () => {
+    const flatRed = new Array(200).fill(50000);
+    const flatIr = new Array(200).fill(50000);
+    expect(computeSpO2(flatRed, flatIr)).toBe(0);
+  });
+
+  it("정상 신호 (R ≈ 0.6) → 정상 SpO₂ 90+ 영역", () => {
+    // redAC/redDC = 200/50000, irAC/irDC = 333/50000 → R = 200/333 ≈ 0.6.
+    // R=0.6 → spo2 = 104 - 17·0.6 = 93.8 → round 94.
+    const red = synthPpg(50000, 200, 300);
+    const ir = synthPpg(50000, 333, 300);
+    const spo2 = computeSpO2(red, ir);
+    expect(spo2).toBeGreaterThanOrEqual(85);
+    expect(spo2).toBeLessThanOrEqual(100);
+    // 신호 품질 비율 = min(redStd, irStd)/max → 200/333 ≈ 0.6 > 0.5 → no penalty.
+    expect(spo2).toBeCloseTo(94, 0);
+  });
+
+  it("R 매우 작음 (< 0.5) → SpO₂ 100", () => {
+    // redAC ≪ irAC → R < 0.5 → 100% (very high O₂ saturation 영역).
+    const red = synthPpg(50000, 50, 300);
+    const ir = synthPpg(50000, 500, 300);
+    const spo2 = computeSpO2(red, ir);
+    expect(spo2).toBe(100);
+  });
+
+  it("결과는 항상 [85, 100] 범위", () => {
+    const red1 = synthPpg(50000, 1500, 300);
+    const ir1 = synthPpg(50000, 200, 300);
+    const v1 = computeSpO2(red1, ir1);
+    if (v1 > 0) {
+      expect(v1).toBeGreaterThanOrEqual(85);
+      expect(v1).toBeLessThanOrEqual(100);
+    }
   });
 });
 

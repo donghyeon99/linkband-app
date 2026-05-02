@@ -49,6 +49,63 @@ spec §17의 검증 항목과 동기화. 진행 중인 것만 여기 노출.
 
 ## Log
 
+### 2026-05-03 (오후) — PPG 모든 placeholder 점등: SpO₂ + Welch/FFT/LF·HF [PROGRESS]
+
+**무엇을**: 직전 entry 이후 남은 PPG placeholder 4개를 일괄 활성화. SpO₂
+(Beer-Lambert) + LF/HF/LF·HF (Welch periodogram + FFT primitive). PPG
+HRV Metrics 14 카드 **전부 DSP wired**.
+
+#### SpO₂ (`src/linkband/dsp.ts:745-`)
+- 신규 `computeSpO2(redRaw, irRaw): number` — 배포본 `sdk_PPGSignalProcessor.ts:1007-1083`
+  정확 동일.
+- 알고리즘: red/IR 각 채널의 AC (peak-to-peak via smoothMa + extrema) / DC (mean)
+  분리 → R = (redAC/redDC) / (irAC/irDC) → piecewise SpO₂ 공식 (R<0.5: 100, [0.5,
+  0.7): `104-17R`, [0.7, 1.0): `112-25R`, [1.0, 2.0): `120-35R`, ≥2.0: `max(70,
+  100-15R)`) → 신호 품질 < 0.5 시 95% 수렴 → [85, 100] clamp + round.
+- 신호 std<10 / 길이 mismatch / 공급 못하면 0.
+- 4 단위 테스트 (mismatch, low-variance, R≈0.6, R<0.5, range invariant).
+- `ppg-view.ts`: `rawRedBuf` 추가 + `m.spo2.update(spo2 > 0 ? spo2 : null)`.
+
+#### LF / HF / LF·HF Ratio (`src/linkband/dsp.ts:855-`)
+- 신규 utility:
+  - `nextPowerOfTwo(n)`, `hammingWindow(size)`,
+  - `performFft(data)` — radix-2 Cooley-Tukey, in-place bit-reversal, 2의 거듭제곱
+    입력 enforce. 결과는 interleaved [re0, im0, re1, im1, ...].
+- 신규 `welchPeriodogram(data, fs): { frequencies, psd }` — scipy.signal.welch
+  동일: window=clamp(N/2, [8, 64]), 50% overlap, Hamming window, FFT, 단면
+  spectrum (DC/Nyquist 외 ×2), 평균.
+- 신규 `computeLfHf(rrMs): { lfPower, hfPower, lfHfRatio }` — 4Hz linear-interp
+  resample (배포본 `resampleRRIntervals` 미러) → Welch PSD → LF [0.04, 0.15] /
+  HF [0.15, 0.4] 사다리꼴 적분 → ms² 환산 (×1e6).
+  - HRV literature 표준 (LF=교감, HF=부교감, LF/HF=자율신경 균형).
+- 4 단위 테스트 (welchPeriodogram: 짧은 입력, 0.2Hz sine peak, DC bin 집중;
+  computeLfHf: RR<5, 균일 RR DC leakage, 0.1Hz 변동 → LF>HF, 무작위 입력 finite/non-negative).
+- `ppg-view.ts`: HRV branch 에서 `computeLfHf(hrvRrMs)` 호출 후 m.lfPower /
+  m.hfPower / m.lfHfRatio 갱신 (0 이면 null → "No data").
+
+#### 검증
+- `tsc --noEmit` clean.
+- `npm run test:run` **76 → 88 GREEN** (+4 SpO₂, +4 Welch, +4 LF/HF).
+
+#### 결과
+- PPG 14 카드 전부 활성: 9 RR-based (HR/HR Max/HR Min/SDNN/RMSSD/SDSD/AVNN/PNN50/PNN20)
+  + 1 stress (PPG Stress Index) + **4 신규 (SpO₂ / LF Power / HF Power / LF·HF Ratio)**.
+- 더 이상 placeholder 카드 없음.
+
+#### 다음 단계
+- ACC σ_max/refG 실 디바이스 캘리브레이션.
+- 성능 모니터링: PPG view 가 매 batch (~0.56s) 마다 `computeSpO2` (smooth
+  + extrema + mean·std) + `computeLfHf` (resample + FFT) 추가 실행 — 현
+  buffer 400 samples 에서 부담 X 이지만 측정 권장.
+- Vercel 배포 hookup (외부 작업).
+
+**참조**: 수정 `src/linkband/dsp.ts` (+computeSpO2, +nextPowerOfTwo,
++hammingWindow, +performFft, +welchPeriodogram, +computeLfHf + helpers),
+`src/ui/ppg-view.ts` (rawRedBuf + 4 placeholder wire), `tests/dsp.test.ts`
+(+12 tests).
+
+---
+
 ### 2026-05-03 (낮) — A+B+C 묶음: PPG 두-경로 wiring / Stress Index 점등 / ACC MotionCards [PROGRESS]
 
 **무엇을**: 직전 entry 의 "다음 단계" 3건 (A: PPG view 가 `detectPpgPeaksForHrv` /
