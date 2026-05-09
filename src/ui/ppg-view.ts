@@ -5,10 +5,9 @@
  *   1. Hero card        — "💓 PPG Pulse Analysis" + 설명
  *   2. 2-col Row        — Filtered PPG Signal | PPG SQI (실 차트)
  *   3. Full-width       — 💓 BPM Trend (실 차트, ~60s 윈도우)
- *   4. Full-width       — 💓 HRV Metrics (14 cards 4-4-3-3 grid, hover tooltip)
- *      활성 8: HR / HR Max / HR Min / SDNN / RMSSD / SDSD / AVNN / PNN50 / PNN20
- *              (PNN20 포함 9개지만 deployed grid 그대로 두고 분류)
- *      placeholder 6: SpO2 / Stress / LF / HF / LF/HF / (no DSP wire 아직)
+ *   4. Full-width       — 💓 HRV Metrics (11 cards 4-4-3 grid, hover tooltip)
+ *      HR / SpO2 / HR Max / HR Min / Stress / RMSSD / SDNN / SDSD /
+ *      AVNN / PNN50 / PNN20 — 모든 카드 DSP wired.
  *
  * Filter chain: bandpass 1-5Hz @ 50Hz. Peak detection: local 0.5s adaptive +
  * 5-pt shape. RR-base HRV.
@@ -25,7 +24,6 @@ import {
   computeHeartRate,
   computeHeartRateValidated,
   computeHrvMetrics,
-  computeLfHf,
   computePpgStressIndex,
   computeSpO2,
   createPpgChannelFilter,
@@ -215,21 +213,16 @@ export function createPpgView(container: HTMLElement): PpgViewHandle {
   metricsCard.appendChild(makeCardTitle("💓 Heart Rate Variability Metrics"));
   metricsCard.appendChild(
     makeCardDesc(
-      "RR-based HRV + HR metrics. 카드 hover 시 산식 / 정상 범위 / 해석 / 학술 reference 표시. " +
-        "SpO₂ / Stress / LF / HF / LF-HF 는 DSP 미구현 — placeholder (No data).",
+      "Real-time PPG analysis — heart rate, HRV, stress, and 11 more indices.",
     ),
   );
-  // sensor-dashboard `PPGMetricsCards.tsx` 동일: 4-4-3-3 grid. 첫 두 행 4-col,
-  // 마지막 두 행 3-col. 각 카드는 threshold-driven rich card + hover tooltip.
+  // 4-4-3 grid (11 cards). LF/HF/LF-HF 행 제거됨.
   const grid4a = document.createElement("div");
   grid4a.className = "ppg-metrics-grid-4";
   metricsCard.appendChild(grid4a);
   const grid4b = document.createElement("div");
   grid4b.className = "ppg-metrics-grid-4";
   metricsCard.appendChild(grid4b);
-  const grid3a = document.createElement("div");
-  grid3a.className = "ppg-metrics-grid-3";
-  metricsCard.appendChild(grid3a);
   const grid3b = document.createElement("div");
   grid3b.className = "ppg-metrics-grid-3";
   metricsCard.appendChild(grid3b);
@@ -237,9 +230,7 @@ export function createPpgView(container: HTMLElement): PpgViewHandle {
 
   container.appendChild(root);
 
-  // 14 metric cards (sensor-dashboard `PPGMetricsCards.tsx` 동일 순서).
-  // 활성 (DSP wired): bpm, hrMax, hrMin, sdnn, rmssd, sdsd, avnn, pnn50, pnn20.
-  // Placeholder (DSP 미구현 — null 유지): spo2, ppgStressIndex, lfPower, hfPower, lfHfRatio.
+  // 11 metric cards. 모든 카드 DSP wired.
   const m = {
     // Row 1 (4-col): HR / SpO2 / HR Max / HR Min.
     bpm: createIndexCard(grid4a, { threshold: ppgIndexThresholds.bpm, decimals: 0, requirePositive: true }),
@@ -251,11 +242,7 @@ export function createPpgView(container: HTMLElement): PpgViewHandle {
     rmssd: createIndexCard(grid4b, { threshold: ppgIndexThresholds.rmssd, decimals: 1 }),
     sdnn: createIndexCard(grid4b, { threshold: ppgIndexThresholds.sdnn, decimals: 1 }),
     sdsd: createIndexCard(grid4b, { threshold: ppgIndexThresholds.sdsd, decimals: 1 }),
-    // Row 3 (3-col): LF / HF / LF-HF.
-    lfPower: createIndexCard(grid3a, { threshold: ppgIndexThresholds.lfPower, decimals: 1 }),
-    hfPower: createIndexCard(grid3a, { threshold: ppgIndexThresholds.hfPower, decimals: 1 }),
-    lfHfRatio: createIndexCard(grid3a, { threshold: ppgIndexThresholds.lfHfRatio, decimals: 2 }),
-    // Row 4 (3-col): AVNN / PNN50 / PNN20.
+    // Row 3 (3-col): AVNN / PNN50 / PNN20.
     avnn: createIndexCard(grid3b, { threshold: ppgIndexThresholds.avnn, decimals: 1 }),
     pnn50: createIndexCard(grid3b, { threshold: ppgIndexThresholds.pnn50, decimals: 1 }),
     pnn20: createIndexCard(grid3b, { threshold: ppgIndexThresholds.pnn20, decimals: 1 }),
@@ -408,13 +395,6 @@ export function createPpgView(container: HTMLElement): PpgViewHandle {
         m.pnn20.update(hrv.pnn20);
         // PPG Stress Index — RR ≥ 5 일 때 의미 있는 0..1 정규화 값.
         m.ppgStressIndex.update(computePpgStressIndex(hrvRrMs));
-
-        // LF / HF / LF·HF — Welch periodogram 기반 (4Hz resample, ms²).
-        // RR ≥ 5 이상 일 때 의미. 산출 실패 (PSD 부족) 시 0 → 카드 "No data".
-        const lfHf = computeLfHf(hrvRrMs);
-        m.lfPower.update(lfHf.lfPower > 0 ? lfHf.lfPower : null);
-        m.hfPower.update(lfHf.hfPower > 0 ? lfHf.hfPower : null);
-        m.lfHfRatio.update(lfHf.lfHfRatio > 0 ? lfHf.lfHfRatio : null);
       }
 
       // BPM trend chart — validated BPM 가 0 이면 skip (잡음 시 trend 흔들림 방지).

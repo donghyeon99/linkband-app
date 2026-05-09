@@ -398,7 +398,7 @@ export function createEegView(container: HTMLElement): EegViewHandle {
   idxCard.appendChild(makeCardTitle("🧠 EEG Analysis Indices"));
   idxCard.appendChild(
     makeCardDesc(
-      "Real-time EEG analysis — focus/relaxation/stress + 4 more (own derivation from band power; spec §17 미해결 — sensor-dashboard 의 외부 SDK 값과 numerical 차이 가능).",
+      "Real-time EEG analysis — focus, relaxation, stress, and 4 more indices",
     ),
   );
   const idxGrid = document.createElement("div");
